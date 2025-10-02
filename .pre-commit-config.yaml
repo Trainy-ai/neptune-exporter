@@ -13,3 +13,9 @@ repos:
     - id: mypy
       args: [ --config-file, pyproject.toml ]
       pass_filenames: false
+- repo: https://github.com/Lucas-C/pre-commit-hooks
+  rev: v1.5.4
+  hooks:
+    - id: insert-license
+      files: ^src/neptune_exporter.*[^/]+\.py$
+      args: [ "--license-filepath", "LICENSE.txt", "--allow-past-years"]

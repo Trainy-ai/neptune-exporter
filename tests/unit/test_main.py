@@ -1,4 +1,4 @@
-from neptune_migration.main import main
+from neptune_exporter.main import main
 
 
 def test_main():
