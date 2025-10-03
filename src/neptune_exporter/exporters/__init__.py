@@ -15,67 +15,14 @@
 
 """Exporters package for extracting data from Neptune."""
 
-from typing import Generator, NewType, Optional, Protocol, Sequence
-from pathlib import Path
-import pyarrow as pa
-
+from .exporter import NeptuneExporter, ProjectId, RunId
 from .neptune3 import Neptune3Exporter
 from .neptune2 import Neptune2Exporter
 
-# Type definitions
-ProjectId = NewType("ProjectId", str)
-RunId = NewType("RunId", str)
-
-
-class NeptuneExporter(Protocol):
-    """Protocol for Neptune data exporters."""
-
-    def list_projects(self) -> list[ProjectId]:
-        """List Neptune projects."""
-        ...
-
-    def list_runs(
-        self, project_id: ProjectId, runs: Optional[str] = None
-    ) -> list[RunId]:
-        """List Neptune runs."""
-        ...
-
-    def download_parameters(
-        self,
-        project_id: ProjectId,
-        run_ids: list[RunId],
-        attributes: None | str | Sequence[str],
-    ) -> Generator[pa.RecordBatch, None, None]:
-        """Download parameters from Neptune runs."""
-        ...
-
-    def download_metrics(
-        self,
-        project_id: ProjectId,
-        run_ids: list[RunId],
-        attributes: None | str | Sequence[str],
-    ) -> Generator[pa.RecordBatch, None, None]:
-        """Download metrics from Neptune runs."""
-        ...
-
-    def download_series(
-        self,
-        project_id: ProjectId,
-        run_ids: list[RunId],
-        attributes: None | str | Sequence[str],
-    ) -> Generator[pa.RecordBatch, None, None]:
-        """Download series data from Neptune runs."""
-        ...
-
-    def download_files(
-        self,
-        project_id: ProjectId,
-        run_ids: list[RunId],
-        attributes: None | str | Sequence[str],
-        destination: Path,
-    ) -> Generator[pa.RecordBatch, None, None]:
-        """Download files from Neptune runs."""
-        ...
-
-
-__all__ = ["NeptuneExporter", "Neptune3Exporter", "Neptune2Exporter"]
+__all__ = [
+    "NeptuneExporter",
+    "Neptune3Exporter",
+    "Neptune2Exporter",
+    "ProjectId",
+    "RunId",
+]

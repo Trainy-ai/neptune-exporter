@@ -16,7 +16,7 @@
 
 import pyarrow as pa
 from tqdm import tqdm
-from neptune_exporter.exporters import NeptuneExporter
+from neptune_exporter.exporters.exporter import NeptuneExporter
 from neptune_exporter.storage import ParquetStorage
 
 

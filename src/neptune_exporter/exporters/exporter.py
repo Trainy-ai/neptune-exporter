@@ -1,0 +1,75 @@
+#
+# Copyright (c) 2025, Neptune Labs Sp. z o.o.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Core exporter protocol and types."""
+
+from typing import Generator, NewType, Optional, Protocol, Sequence
+from pathlib import Path
+import pyarrow as pa
+
+# Type definitions
+ProjectId = NewType("ProjectId", str)
+RunId = NewType("RunId", str)
+
+
+class NeptuneExporter(Protocol):
+    """Protocol for Neptune data exporters."""
+
+    def list_projects(self) -> list[ProjectId]:
+        """List Neptune projects."""
+        ...
+
+    def list_runs(
+        self, project_id: ProjectId, runs: Optional[str] = None
+    ) -> list[RunId]:
+        """List Neptune runs."""
+        ...
+
+    def download_parameters(
+        self,
+        project_id: ProjectId,
+        run_ids: list[RunId],
+        attributes: None | str | Sequence[str],
+    ) -> Generator[pa.RecordBatch, None, None]:
+        """Download parameters from Neptune runs."""
+        ...
+
+    def download_metrics(
+        self,
+        project_id: ProjectId,
+        run_ids: list[RunId],
+        attributes: None | str | Sequence[str],
+    ) -> Generator[pa.RecordBatch, None, None]:
+        """Download metrics from Neptune runs."""
+        ...
+
+    def download_series(
+        self,
+        project_id: ProjectId,
+        run_ids: list[RunId],
+        attributes: None | str | Sequence[str],
+    ) -> Generator[pa.RecordBatch, None, None]:
+        """Download series data from Neptune runs."""
+        ...
+
+    def download_files(
+        self,
+        project_id: ProjectId,
+        run_ids: list[RunId],
+        attributes: None | str | Sequence[str],
+        destination: Path,
+    ) -> Generator[pa.RecordBatch, None, None]:
+        """Download files from Neptune runs."""
+        ...

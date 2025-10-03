@@ -15,6 +15,7 @@
 
 from pathlib import Path
 import pyarrow as pa
+import pyarrow.parquet as pq
 
 
 class ParquetStorage:
@@ -27,4 +28,6 @@ class ParquetStorage:
 
     def save(self, project_id: str, data: pa.Table) -> None:
         table_path = self.base_path / f"{project_id}.parquet"
-        pa.write_table(data, table_path)
+        # Ensure the directory exists before writing the file
+        table_path.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(data, table_path)

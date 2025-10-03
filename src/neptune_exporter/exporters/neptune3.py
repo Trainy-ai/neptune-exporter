@@ -22,7 +22,7 @@ from neptune_query import runs as nq_runs
 from neptune_query.filters import Attribute, AttributeFilter
 
 from neptune_exporter import model
-from neptune_exporter.exporters import ProjectId, RunId
+from neptune_exporter.exporters.exporter import ProjectId, RunId
 
 
 _PARAMETER_TYPES: Sequence[str] = (
@@ -58,7 +58,7 @@ class Neptune3Exporter:
     def list_runs(
         self, project_id: ProjectId, runs: Optional[str] = None
     ) -> list[RunId]:
-        return nq_runs.list_runs(project_id, runs)
+        return nq_runs.list_runs(project=project_id, runs=runs)
 
     def download_parameters(
         self,
@@ -87,7 +87,7 @@ class Neptune3Exporter:
 
         # Melt the DataFrame to convert from wide to long format
         melted_df = parameters_df.melt(
-            id_vars=["custom_run_id"],
+            id_vars=["run"],
             var_name="attribute_path_type",
             value_name="value",
         )
@@ -95,13 +95,13 @@ class Neptune3Exporter:
         # Split attribute_path_type into path and type
         melted_df[["attribute_path", "attribute_type"]] = melted_df[
             "attribute_path_type"
-        ].str.rsplit(":", 1, expand=True)
+        ].str.rsplit(":", n=1, expand=True)
 
         # Create the schema-compliant DataFrame
         result_df = pd.DataFrame(
             {
                 "project_id": project_id,
-                "run_id": melted_df["custom_run_id"],
+                "run_id": melted_df["run"],
                 "attribute_path": melted_df["attribute_path"],
                 "attribute_type": melted_df["attribute_type"],
                 "step": None,
