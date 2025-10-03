@@ -20,7 +20,7 @@ Migration tool to help Neptune customers transition their data out of neptune in
 ```
 neptune_exporter/
 ├── main.py                       # Cli entry point
-├── model.py                      # Neptune data model
+├── model.py                      # Data model used in between the steps
 ├── exporters/
 │   ├── neptune3.py               # Using neptune-query
 │   └── neptune2.py               # Using neptune-client

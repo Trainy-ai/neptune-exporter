@@ -1449,6 +1449,7 @@ dependencies = [
     { name = "neptune" },
     { name = "neptune-query" },
     { name = "pyarrow" },
+    { name = "tqdm" },
 ]
 
 [package.dev-dependencies]
@@ -1465,6 +1466,7 @@ requires-dist = [
     { name = "neptune", specifier = ">=1.14.0" },
     { name = "neptune-query", specifier = ">=1.5.1" },
     { name = "pyarrow", specifier = ">=21.0.0" },
+    { name = "tqdm", specifier = ">=4.67.1" },
 ]
 
 [package.metadata.requires-dev]

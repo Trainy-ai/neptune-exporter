@@ -20,6 +20,8 @@ import neptune_query as nq
 from neptune_query import runs as nq_runs
 from neptune_query.filters import Attribute, AttributeFilter
 
+from neptune_exporter import model
+
 
 ProjectId = NewType("ProjectId", str)
 RunId = NewType("RunId", str)
@@ -76,7 +78,7 @@ class Neptune3Exporter:
                 type_suffix_in_column_names=True,
             )
         )
-        return pa.RecordBatch.from_pandas(parameters_df)
+        return pa.RecordBatch.from_pandas(parameters_df, schema=model.SCHEMA)
 
     def download_metrics(
         self,
@@ -92,7 +94,7 @@ class Neptune3Exporter:
             lineage_to_the_root=False,
             type_suffix_in_column_names=True,
         )
-        return pa.RecordBatch.from_pandas(metrics_df)
+        return pa.RecordBatch.from_pandas(metrics_df, schema=model.SCHEMA)
 
     def download_series(
         self,
@@ -108,7 +110,7 @@ class Neptune3Exporter:
             lineage_to_the_root=False,
             ype_suffix_in_column_names=True,
         )
-        return pa.RecordBatch.from_pandas(series_df)
+        return pa.RecordBatch.from_pandas(series_df, schema=model.SCHEMA)
 
     def download_artifacts(
         self,
@@ -147,4 +149,6 @@ class Neptune3Exporter:
             )
         )
 
-        return pa.stack_batches([file_paths_df, file_series_paths_df])
+        return pa.stack_batches(
+            [file_paths_df, file_series_paths_df], schema=model.SCHEMA
+        )
