@@ -110,8 +110,8 @@ uv run neptune-exporter export -p "workspace/proj" --exporter neptune2 --data-pa
   # Comet
   uv run neptune-exporter load \
     --loader comet \
-    --comet-workspace my-workspace \
-    --comet-api-key "$COMET_API_KEY" \
+    --comet-workspace "my-workspace" \
+    --comet-api-key "my-comet-api-key" \
     --data-path ./exports/data \
     --files-path ./exports/files
   ```
