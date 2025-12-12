@@ -412,7 +412,7 @@ def test_upload_artifacts_string_series():
         }
     )
 
-    with patch("tempfile.NamedTemporaryFile") as mock_temp_file:
+    with patch("neptune_exporter.loaders.comet_loader.tempfile.NamedTemporaryFile") as mock_temp_file:
         # Mock temporary file
         mock_file = Mock()
         mock_file.name = "/tmp/test_series.txt"
