@@ -1,12 +1,12 @@
 # Neptune Exporter
 
-Neptune Exporter is a CLI tool to move Neptune experiments (version `2.x` or `3.x`) to disk as parquet and files, with an option to load them into MLflow or Weights & Biases.
+Neptune Exporter is a CLI tool to move Neptune experiments (version `2.x` or `3.x`) to disk as parquet and files, with an option to load them into MLflow, Weights & Biases, or Comet.
 
 ## What it does
 
 - Streams runs from Neptune to local storage. Artifacts are downloaded alongside the parquet.
 - Skips runs that were already exported (presence of `part_0.parquet`), making exports resumable.
-- Loads parquet data into MLflow or W&B while preserving run structure (forks, steps, attributes) as closely as possible.
+- Loads parquet data into MLflow, W&B, or Comet while preserving run structure (forks, steps, attributes) as closely as possible.
 - Prints a human-readable summary of what is on disk.
 
 ## Requirements
@@ -18,6 +18,7 @@ Neptune Exporter is a CLI tool to move Neptune experiments (version `2.x` or `3.
 - Target credentials when loading:
   - MLflow tracking URI, set with `MLFLOW_TRACKING_URI` or `--mlflow-tracking-uri`.
   - W&B entity and API key, set with `WANDB_ENTITY`/`--wandb-entity` and `WANDB_API_KEY`/`--wandb-api-key`.
+  - Comet workspace and API key, set with `COMET_WORKSPACE`/`--comet-workspace` and `COMET_API_KEY`/`--comet-api-key`.
 
 ## Installation
 
@@ -105,6 +106,14 @@ uv run neptune-exporter export -p "workspace/proj" --exporter neptune2 --data-pa
     --wandb-api-key "$WANDB_API_KEY" \
     --data-path ./exports/data \
     --files-path ./exports/files
+
+  # Comet
+  uv run neptune-exporter load \
+    --loader comet \
+    --comet-workspace "my-workspace" \
+    --comet-api-key "my-comet-api-key" \
+    --data-path ./exports/data \
+    --files-path ./exports/files
   ```
   
   > [!NOTE]
@@ -162,6 +171,9 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
 - **W&B loader**:
   - Requires `--wandb-entity`. Project names derive from `project_id`, plus optional `--name-prefix`, sanitized.
   - String series become W&B Tables, histograms use `wandb.Histogram`, files/file series become artifacts. Forked runs from Neptune `3.x` are handled best-effort (W&B has limited preview support).
+- **Comet loader**:
+  - Requires `--comet-workspace`. Project names derive from `project_id`, plus optional `--name-prefix`, sanitized.
+  - Attribute names are sanitized to Comet format (alphanumeric + underscore, must start with letter/underscore). Metrics/series use the integer step. Files are uploaded as assets/images from `--files-path`. String series become text assets, histograms use `log_histogram_3d`.
 - If a target run with the same name already exists in the experiment or project, the loader skips uploading that run to avoid duplicates.
 
 ## Experiment/run mapping to targets
@@ -173,27 +185,36 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
   - Neptune `project_id` maps to the W&B project name (sanitized, plus optional `--name-prefix`).
   - `sys/name` becomes the W&B group, so all runs with the same `sys/name` land in the same group.
   - Runs are created with their Neptune `run_id` (or `custom_run_id`) as the run name. Forks from Neptune `3.x` are mapped best-effort via `fork_from`; behavior depends on W&B's fork support.
+- **Comet:**
+  - Neptune `project_id` maps to the Comet project name (sanitized, plus optional `--name-prefix`).
+  - `sys/name` becomes the Comet experiment name.
+  - Runs are created with their Neptune `run_id` (or `custom_run_id`) as the experiment name. Fork relationships are not supported by Comet.
 
 ## Attribute/type mapping (detailed)
 
 - **Parameters** (`float`, `int`, `string`, `bool`, `datetime`, `string_set`):
   - MLflow: logged as params (values stringified by the client).
   - W&B: logged as config with native types (string_set → list).
+  - Comet: logged as parameters with native types (string_set → list).
 - **Float series** (`float_series`):
-  - Both targets: logged as metrics using the integer step (`--step-multiplier` applied).
+  - All targets: logged as metrics using the integer step (`--step-multiplier` applied).
   - Timestamps are forwarded when present.
 - **String series** (`string_series`):
   - MLflow: saved as artifacts (one text file per series).
   - W&B: logged as a Table with columns `step`, `value`, `timestamp`.
+  - Comet: uploaded as text assets.
 - **Histogram series** (`histogram_series`):
   - MLflow: uploaded as artifacts containing the histogram payload.
   - W&B: logged as `wandb.Histogram`.
+  - Comet: logged as `histogram_3d`.
 - **Files** (`file`) and **file series** (`file_series`):
   - Downloaded to `--files-path/<sanitized_project_id>/...` with relative paths stored in `file_value.path`.
   - MLflow/W&B: uploaded as artifacts. File series include the step in the artifact name/path so steps remain distinguishable.
+  - Comet: uploaded as assets. Comet detects images and uploads them as images.
 - **Attribute names**:
   - MLflow: sanitized to allowed chars (alphanumeric + `_-. /`), truncated at 250 chars.
   - W&B: sanitized to allowed pattern (`^[_a-zA-Z][_a-zA-Z0-9]*$`); invalid chars become `_`, and names are forced to start with a letter or underscore.
+  - Comet: sanitized to allowed pattern (`^[_a-zA-Z][_a-zA-Z0-9]*$`); invalid chars become `_`, and names are forced to start with a letter or underscore.
 
 For details on Neptune attribute types, see the [documentation](https://docs.neptune.ai/attribute_types).
 
