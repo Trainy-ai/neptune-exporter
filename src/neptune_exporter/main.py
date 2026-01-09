@@ -362,7 +362,8 @@ def export(
 @click.option(
     "--loader",
     type=click.Choice(
-        ["mlflow", "wandb", "litlogger", "zenml", "comet"], case_sensitive=False
+        ["mlflow", "wandb", "litlogger", "zenml", "comet", "minfx"],
+        case_sensitive=False,
     ),
     help="Target platform loader to use.",
 )
@@ -399,6 +400,14 @@ def export(
     help="Lightning.ai user ID for authentication. Only used with --loader litlogger.",
 )
 @click.option(
+    "--minfx-project",
+    help="Minfx project. Only used with --loader minfx.",
+)
+@click.option(
+    "--minfx-api-token",
+    help="Minfx API token. Only used with --loader minfx.",
+)
+@click.option(
     "--name-prefix",
     help="Optional prefix for experiment/project and run names.",
 )
@@ -432,6 +441,8 @@ def load(
     litlogger_owner: str | None,
     litlogger_api_key: str | None,
     litlogger_user_id: str | None,
+    minfx_project: str | None,
+    minfx_api_token: str | None,
     name_prefix: str | None,
     verbose: bool,
     log_file: Path,
@@ -439,10 +450,11 @@ def load(
     comet_workspace: str | None,
     comet_api_key: str | None,
 ) -> None:
-    """Load exported Neptune data from parquet files to target platforms (MLflow, W&B, Comet, or LitLogger).
+    """Load exported Neptune data from parquet files to target platforms.
 
     This tool loads previously exported Neptune data from parquet files
-    and uploads it to MLflow, Weights & Biases, Comet or LitLogger for further analysis and tracking.
+    and uploads it to MLflow, Weights & Biases, Comet, LitLogger, or Minfx
+    for further analysis and tracking.
 
     The log file specified with --log-file will have a timestamp suffix
     automatically added (e.g., neptune_exporter_20250115_143022.log) to ensure
@@ -493,6 +505,10 @@ def load(
     \b
     # Load to LitLogger (Lightning.ai) with prior login
     lightning login && neptune-exporter load --loader litlogger
+
+    \b
+    # Load to Minfx
+    neptune-exporter load --loader minfx --minfx-project "target-org/target-project" --minfx-api-token xxx
     """
     # Convert tuples to lists and handle None values
     project_ids_list = list(project_ids) if project_ids else None
@@ -627,6 +643,38 @@ def load(
             show_client_logs=verbose,
         )
         loader_name = "LitLogger"
+    elif loader == "minfx":
+        from neptune_exporter.loaders.minfx_loader import (
+            MinfxLoader,
+        )
+        from neptune_exporter.loaders import MINFX_AVAILABLE
+
+        if not MINFX_AVAILABLE:
+            raise click.BadParameter(
+                "minfx loader selected but minfx is not installed. "
+                "Install with `pip install minfx`."
+            )
+
+        if not minfx_project:
+            minfx_project = os.getenv("MINFX_PROJECT")
+            if not minfx_project:
+                raise click.BadParameter(
+                    "Minfx project is required when using --loader minfx. "
+                    "You can set it as an environment variable MINFX_PROJECT or "
+                    "provide it with --minfx-project."
+                )
+        if not minfx_api_token:
+            minfx_api_token = os.getenv("MINFX_API_TOKEN")
+            # API token is optional - minfx client can use other auth methods
+
+        data_loader = MinfxLoader(
+            project=minfx_project,
+            api_token=minfx_api_token,
+            name_prefix=name_prefix,
+            show_client_logs=verbose,
+        )
+        loader_name = "Minfx"
+        logger.info(f"  Minfx project: {minfx_project}")
     else:
         raise click.BadParameter(f"Unknown loader: {loader}")
 

@@ -31,8 +31,20 @@ except Exception:  # pragma: no cover - litlogger and LitLoggerLoader are option
     LitLoggerLoader = None  # type: ignore[misc,assignment]
     LITLOGGER_AVAILABLE = False  # type: ignore[misc,assignment]
 
+try:
+    from . import minfx_loader
+    from .minfx_loader import MinfxLoader
+
+    MINFX_AVAILABLE = True
+except Exception:  # pragma: no cover - minfx is optional
+    minfx_loader = None  # type: ignore[misc,assignment]
+    MinfxLoader = None  # type: ignore[misc,assignment]
+    MINFX_AVAILABLE = False  # type: ignore[misc,assignment]
+
 __all__ = ["DataLoader", "MLflowLoader", "WandBLoader"]
 if LITLOGGER_AVAILABLE:
     __all__.append("LitLoggerLoader")
 if ZENML_AVAILABLE:
     __all__.append("ZenMLLoader")
+if MINFX_AVAILABLE:
+    __all__.append("MinfxLoader")
