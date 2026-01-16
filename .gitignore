@@ -19,6 +19,6 @@ wandb/
 exports/
 context/
 .python-version
-neptune_exporter*
+/neptune_exporter_*
 .DS_Store
 .pluto/
