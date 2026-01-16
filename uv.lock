@@ -1584,16 +1584,13 @@ litlogger = [
 minfx = [
     { name = "minfx" },
 ]
-<<<<<<< HEAD
 mlflow = [
     { name = "mlflow" },
 ]
 wandb = [
     { name = "wandb" },
-=======
 pluto = [
     { name = "pluto-ml" },
->>>>>>> eea2d89 (v0)
 ]
 zenml = [
     { name = "zenml" },
