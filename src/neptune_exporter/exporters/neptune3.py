@@ -60,9 +60,11 @@ class Neptune3Exporter(NeptuneExporter):
         max_workers: int = 8,
         include_archived_runs: bool = False,
         show_client_logs: bool = False,
+        include_metric_previews: bool = False,
     ):
         self._quantize_base = Decimal("1.000000")
         self._include_archived_runs = include_archived_runs
+        self._include_metric_previews = include_metric_previews
         self._series_attribute_batch_size = series_attribute_batch_size
         self._file_attribute_batch_size = file_attribute_batch_size
         self._file_series_attribute_batch_size = file_series_attribute_batch_size
@@ -236,7 +238,7 @@ class Neptune3Exporter(NeptuneExporter):
                         runs=run_ids,
                         attributes=attribute_batch,
                         include_time="absolute",
-                        include_point_previews=False,
+                        include_point_previews=self._include_metric_previews,
                         lineage_to_the_root=False,
                         type_suffix_in_column_names=False,  # assume the type is always "float_series"
                     )

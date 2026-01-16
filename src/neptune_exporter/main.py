@@ -89,6 +89,11 @@ def cli():
     help="Include archived or trashed runs in export.",
 )
 @click.option(
+    "--include-metric-previews",
+    is_flag=True,
+    help="Include metric previews in export. Only supported by Neptune 3 exporter. See https://docs.neptune.ai/metric_previews",
+)
+@click.option(
     "--exporter",
     type=click.Choice(["neptune2", "neptune3"], case_sensitive=False),
     help="Neptune exporter to use.",
@@ -142,6 +147,7 @@ def export(
     classes: tuple[str, ...],
     exclude: tuple[str, ...],
     include_archived_runs: bool,
+    include_metric_previews: bool,
     exporter: str,
     data_path: Path,
     files_path: Path,
@@ -280,6 +286,7 @@ def export(
             error_reporter=error_reporter,
             api_token=api_token,
             include_archived_runs=include_archived_runs,
+            include_metric_previews=include_metric_previews,
         )
     else:
         raise click.BadParameter(f"Unknown exporter: {exporter}")
