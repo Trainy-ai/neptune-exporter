@@ -17,3 +17,8 @@ wheels/
 .neptune/
 wandb/
 exports/
+context/
+.python-version
+neptune_exporter*
+.DS_Store
+.pluto/

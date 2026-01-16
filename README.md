@@ -177,6 +177,16 @@ uv run neptune-exporter export -p "workspace/proj" --exporter neptune2 --runs-qu
     --minfx-api-token "$MINFX_API_TOKEN" \
     --data-path ./exports/data \
     --files-path ./exports/files
+
+  # Pluto (Trainy.ai)
+  uv run neptune-exporter load \
+    --loader pluto \
+    --data-path ./exports/data \
+    --files-path ./exports/files
+
+  # Pluto configuration
+  - Set `PLUTO_API_KEY` for authentication (or provide via your environment).
+  - Install the client: `pip install "neptune-exporter[pluto]"` or `pip install pluto-ml`.
   ```
 
   > [!NOTE]

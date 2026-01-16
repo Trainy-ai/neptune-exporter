@@ -63,6 +63,14 @@ except Exception:  # pragma: no cover - minfx is optional
     MinfxLoader = None  # type: ignore[misc,assignment]
     MINFX_AVAILABLE = False  # type: ignore[misc,assignment]
 
+try:
+    from .pluto_loader import PlutoLoader
+
+    PLUTO_AVAILABLE = True
+except Exception:  # pragma: no cover - pluto is optional
+    PlutoLoader = None  # type: ignore[misc,assignment]
+    PLUTO_AVAILABLE = False  # type: ignore[misc,assignment]
+
 __all__ = ["DataLoader"]
 if MLFLOW_AVAILABLE:
     __all__.append("MLflowLoader")
@@ -70,9 +78,13 @@ if WANDB_AVAILABLE:
     __all__.append("WandBLoader")
 if COMET_AVAILABLE:
     __all__.append("CometLoader")
+
+
 if LITLOGGER_AVAILABLE:
     __all__.append("LitLoggerLoader")
 if ZENML_AVAILABLE:
     __all__.append("ZenMLLoader")
 if MINFX_AVAILABLE:
     __all__.append("MinfxLoader")
+if PLUTO_AVAILABLE:
+    __all__.append("PlutoLoader")

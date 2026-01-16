@@ -3,7 +3,7 @@ name = "neptune-exporter"
 version = "0.1.0"
 description = "A tool to export Neptune experiment data to a file or other services."
 readme = "README.md"
-requires-python = ">=3.13,<3.15"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "click>=8.1.0,<9.0.0",
     "neptune>=1.14.0,<2.0.0",
@@ -31,6 +31,9 @@ litlogger = [
     "matplotlib",
 ]
 minfx = ["minfx"]
+# Use the latest published stable pluto-ml available on PyPI. For active development
+# or access to newest features, prefer `pluto-ml-nightly[full]` (pre-release).
+pluto = ["pluto-ml>=0.0.2"]
 
 [project.scripts]
 neptune-exporter = "neptune_exporter.main:main"

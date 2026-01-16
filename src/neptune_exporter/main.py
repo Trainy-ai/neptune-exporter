@@ -28,6 +28,11 @@ from neptune_exporter.exporters.neptune2 import Neptune2Exporter
 from neptune_exporter.exporters.neptune3 import Neptune3Exporter
 from neptune_exporter.loader_manager import LoaderManager
 from neptune_exporter.loaders.loader import DataLoader
+<<<<<<< HEAD
+=======
+# Optional loaders (mlflow, wandb, comet, litlogger) are imported lazily
+# inside the `load()` function to avoid requiring their SDKs at CLI import time.
+>>>>>>> eea2d89 (v0)
 from neptune_exporter.storage.parquet_reader import ParquetReader
 from neptune_exporter.storage.parquet_writer import ParquetWriter
 from neptune_exporter.summary_manager import SummaryManager
@@ -375,7 +380,7 @@ def export(
 @click.option(
     "--loader",
     type=click.Choice(
-        ["mlflow", "wandb", "litlogger", "zenml", "comet", "minfx"],
+        ["mlflow", "wandb", "litlogger", "zenml", "comet", "minfx", "pluto"],
         case_sensitive=False,
     ),
     help="Target platform loader to use.",
@@ -580,6 +585,8 @@ def load(
                 raise click.BadParameter(
                     "MLflow tracking URI is required when using --loader mlflow. You can set it as an environment variable MLFLOW_TRACKING_URI or provide it with --mlflow-tracking-uri."
                 )
+        from neptune_exporter.loaders.mlflow_loader import MLflowLoader
+
         data_loader = MLflowLoader(
             tracking_uri=mlflow_tracking_uri,
             name_prefix=name_prefix,
@@ -608,6 +615,8 @@ def load(
                 raise click.BadParameter(
                     "W&B API key is required when using --loader wandb. You can set it as an environment variable WANDB_API_KEY or provide it with --wandb-api-key."
                 )
+        from neptune_exporter.loaders.wandb_loader import WandBLoader
+
         data_loader = WandBLoader(
             entity=wandb_entity,
             api_key=wandb_api_key,
@@ -658,6 +667,8 @@ def load(
                     "Comet API key is required when using --loader comet. You can set it as an environment variable COMET_API_KEY, provide it with --comet-api-key, or in a ~/.comet.config file"
                 )
 
+        from neptune_exporter.loaders.comet_loader import CometLoader
+
         data_loader = CometLoader(
             workspace=comet_workspace,
             api_key=comet_api_key,
@@ -684,6 +695,8 @@ def load(
         # User ID is optional
         if not litlogger_user_id:
             litlogger_user_id = os.getenv("LITLOGGER_USER_ID")
+        from neptune_exporter.loaders.litlogger_loader import LitLoggerLoader
+
         data_loader = LitLoggerLoader(
             owner=litlogger_owner,
             api_key=litlogger_api_key,
@@ -692,6 +705,26 @@ def load(
             show_client_logs=verbose,
         )
         loader_name = "LitLogger"
+    elif loader == "pluto":
+        from neptune_exporter.loaders import PlutoLoader, PLUTO_AVAILABLE
+
+        if not PLUTO_AVAILABLE:
+            raise click.BadParameter(
+                "Pluto loader selected but pluto SDK is not available. "
+                "Install with `pip install pluto-ml` or `pluto-ml-nightly` and try again."
+            )
+
+        # Read credentials from env if not provided via options
+        pluto_api_key = os.getenv("PLUTO_API_KEY")
+        pluto_host = os.getenv("PLUTO_URL_API") or os.getenv("PLUTO_URL_PY") or os.getenv("PLUTO_URL_APP")
+
+        data_loader = PlutoLoader(
+            api_key=pluto_api_key,
+            host=pluto_host,
+            name_prefix=name_prefix,
+            show_client_logs=verbose,
+        )
+        loader_name = "Pluto"
     elif loader == "minfx":
         from neptune_exporter.loaders.minfx_loader import (
             MinfxLoader,
