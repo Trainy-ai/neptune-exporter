@@ -1569,6 +1569,7 @@ dependencies = [
     { name = "click" },
     { name = "neptune" },
     { name = "neptune-query" },
+    { name = "pluto-ml" },
     { name = "pyarrow" },
     { name = "tqdm" },
 ]
@@ -1587,11 +1588,11 @@ minfx = [
 mlflow = [
     { name = "mlflow" },
 ]
-wandb = [
-    { name = "wandb" },
-]
 pluto = [
     { name = "pluto-ml" },
+]
+wandb = [
+    { name = "wandb" },
 ]
 zenml = [
     { name = "zenml" },
@@ -1616,6 +1617,7 @@ requires-dist = [
     { name = "mlflow", marker = "extra == 'mlflow'", specifier = ">=3.4.0,<4.0.0" },
     { name = "neptune", specifier = ">=1.14.0,<2.0.0" },
     { name = "neptune-query", specifier = ">=1.5.1,<2.0.0" },
+    { name = "pluto-ml", specifier = ">=0.0.2" },
     { name = "pluto-ml", marker = "extra == 'pluto'", specifier = ">=0.0.2" },
     { name = "pyarrow", specifier = ">=21.0.0,<22.0.0" },
     { name = "tqdm", specifier = ">=4.67.1,<5.0.0" },

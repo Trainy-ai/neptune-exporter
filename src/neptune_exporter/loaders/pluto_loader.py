@@ -5,6 +5,7 @@ import gc
 import logging
 import os
 import re
+import sys
 import time
 from decimal import Decimal
 from pathlib import Path
@@ -29,6 +30,13 @@ class PlutoLoader(DataLoader):
         skip_runtime_attachments: bool = True,
     ) -> None:
         self._logger = logging.getLogger(__name__)
+        
+        # Add StreamHandler so logs go to stdout (Pluto's ConsoleHandler will capture them)
+        # Only add if not already present to avoid duplicate logs
+        if not any(isinstance(h, logging.StreamHandler) for h in self._logger.handlers):
+            stream_handler = logging.StreamHandler()
+            stream_handler.setFormatter(logging.Formatter("%(asctime)s %(name)s:%(levelname)s: %(message)s"))
+            self._logger.addHandler(stream_handler)
 
         self.api_key = api_key
         self.host = host
@@ -37,30 +45,24 @@ class PlutoLoader(DataLoader):
 
         # Smaller defaults; Pluto tends to buffer internally.
         self._batch_rows: int = int(os.getenv("NEPTUNE_EXPORTER_PLUTO_BATCH_ROWS", "10000"))
-        # Hard cap to prevent “I set 200000 by accident” scenarios.
-        self._batch_rows = max(1000, min(self._batch_rows, 20000))
+        # Minimum of 1000 to prevent inefficient tiny batches
+        self._batch_rows = max(1000, self._batch_rows)
 
         # Default to downsampling; lossless metrics with 900k steps is unfeasible
         self._log_every: int = int(os.getenv("NEPTUNE_EXPORTER_PLUTO_LOG_EVERY", "50"))
         if self._log_every <= 0:
             self._log_every = 1
 
-        # Flush frequently if Pluto supports it
-        self._flush_every_steps: int = int(os.getenv("NEPTUNE_EXPORTER_PLUTO_FLUSH_EVERY_N_STEPS", "50"))
-        if self._flush_every_steps <= 0:
-            self._flush_every_steps = 50
+        # Flush buffered metrics when buffer reaches this many steps
+        self._flush_every: int = int(os.getenv("NEPTUNE_EXPORTER_PLUTO_FLUSH_EVERY", "1000"))
+        if self._flush_every < 100:
+            self._flush_every = 100
 
-        # Skip toggles (use these to isolate the culprit quickly)
-        self._skip_params = os.getenv("NEPTUNE_EXPORTER_PLUTO_SKIP_PARAMS", "0") == "1"
-        self._skip_metrics = os.getenv("NEPTUNE_EXPORTER_PLUTO_SKIP_METRICS", "0") == "1"
-        self._skip_files = os.getenv("NEPTUNE_EXPORTER_PLUTO_SKIP_FILES", "0") == "1"
-        self._skip_text = os.getenv("NEPTUNE_EXPORTER_PLUTO_SKIP_TEXT", "0") == "1"
-        self._skip_hist = os.getenv("NEPTUNE_EXPORTER_PLUTO_SKIP_HIST", "0") == "1"
-
-        # Metrics streaming: buffer size before flushing (bounds memory)
-        self._metrics_stream_buffer_steps: int = int(os.getenv("NEPTUNE_EXPORTER_PLUTO_METRICS_STREAM_BUFFER_STEPS", "1000"))
-        if self._metrics_stream_buffer_steps < 100:
-            self._metrics_stream_buffer_steps = 100
+        # File upload chunking
+        self._file_chunk_size: int = int(os.getenv("NEPTUNE_EXPORTER_PLUTO_FILE_CHUNK_SIZE", "100"))
+        if self._file_chunk_size < 1:
+            self._file_chunk_size = 100
+        self._file_chunk_sleep: float = float(os.getenv("NEPTUNE_EXPORTER_PLUTO_FILE_CHUNK_SLEEP", "0.5"))
 
         # Optional hard cap to prevent pathological runs (0 = disabled)
         self._max_files_per_run: int = int(os.getenv("NEPTUNE_EXPORTER_PLUTO_MAX_FILES_PER_RUN", "0"))
@@ -255,6 +257,8 @@ class PlutoLoader(DataLoader):
         step_multiplier: int,
     ) -> None:
         run_id_str = str(run_id)
+        self._logger.info("Starting upload_run_data for run %s", run_id_str)
+        
         op = self._ops.get(run_id_str)
 
         if op is None:
@@ -264,8 +268,18 @@ class PlutoLoader(DataLoader):
             raise RuntimeError(f"No active Pluto Op for run {run_id_str}")
 
         pluto = self._ensure_pluto()
+        self._logger.info("Pluto SDK ensured, starting data processing for run %s", run_id_str)
+        
+        # Log detected configuration
+        self._logger.info(
+            "Pluto loader config: BATCH_ROWS=%d, LOG_EVERY=%d, FLUSH_EVERY=%d, "
+            "FILE_CHUNK_SIZE=%d, FILE_CHUNK_SLEEP=%.1f",
+            self._batch_rows, self._log_every, self._flush_every,
+            self._file_chunk_size, self._file_chunk_sleep
+        )
 
         any_logged = False
+        op_log_call_count = 0  # Track total op.log() calls
 
         # Accumulate all data to log once at the end (avoids thread exhaustion)
         # Metrics: stream in chunks to bound memory (don't accumulate all 900k steps)
@@ -273,25 +287,45 @@ class PlutoLoader(DataLoader):
         streamed_metrics_count: int = 0
         buffered_metrics: dict[int | None, dict[str, float]] = {}  # step -> {metric_name: value}
         all_files_list: list[dict[str, object]] = []  # List of file batches to log chunked
-        all_texts: dict[int | None, dict[str, object]] = {}  # step -> {name: Text}
+        stdout_lines: list[str] = []  # Collect all stdout string_series
+        stderr_lines: list[str] = []  # Collect all stderr string_series
         all_hists: dict[int | None, dict[str, object]] = {}  # step -> {name: Histogram}
         all_file_items_queued = 0
+
+        # Counters for detailed logging
+        params_count: int = 0
+        metric_series_count: int = 0
+        file_series_count: int = 0
+        file_count: int = 0
+        artifact_count: int = 0
+        string_series_count: int = 0
+        histogram_series_count: int = 0
 
         last_heartbeat_ts = time.time()
 
         try:
+            batch_count = 0
+            total_rows_processed = 0
             for part in run_data:
+                self._logger.debug("Received part from run_data generator")
                 for batch in part.to_batches(max_chunksize=self._batch_rows):
+                    batch_count += 1
+                    total_rows_processed += len(batch)
+                    if batch_count % 10 == 0:
+                        self._logger.info(
+                            "Processing parquet batch %d (%d rows, %d total rows)",
+                            batch_count, len(batch), total_rows_processed
+                        )
                     batch_table = pa.Table.from_batches([batch])
                     df = batch_table.to_pandas(split_blocks=True, self_destruct=True)
 
                     # -------- Params --------
-                    if not self._skip_params:
-                        param_types = {"float", "int", "string", "bool", "datetime", "string_set"}
-                        params_df = df[df["attribute_type"].isin(param_types)]
-                        if not params_df.empty:
+                    param_types = {"float", "int", "string", "bool", "datetime", "string_set"}
+                    params_df = df[df["attribute_type"].isin(param_types)]
+                    if not params_df.empty:
                             params: dict[str, object] = {}
                             for _, row in params_df.iterrows():
+                                params_count += 1
                                 name = self._sanitize_attribute_name(row["attribute_path"])
                                 atype = row["attribute_type"]
                                 if atype == "float" and pd.notna(row.get("float_value")):
@@ -308,15 +342,17 @@ class PlutoLoader(DataLoader):
                                     params[name] = list(row["string_set_value"])
                             if params and hasattr(op, "update_config"):
                                 try:
+                                    self._logger.info("Pluto: update_config with %d params", len(params))
                                     op.update_config(params)
+                                    op_log_call_count += 1
                                     any_logged = True
                                 except Exception:
                                     self._logger.debug("op.update_config failed", exc_info=True)
 
                     # -------- Metrics (float_series) --------
-                    if not self._skip_metrics:
-                        metrics_df = df[df["attribute_type"] == "float_series"]
-                        if not metrics_df.empty:
+                    metrics_df = df[df["attribute_type"] == "float_series"]
+                    if not metrics_df.empty:
+                            metric_series_count += len(metrics_df)
                             for _, row in metrics_df.iterrows():
                                 step = self._convert_step_to_int_optional(row.get("step"), step_multiplier)
                                 if step is None or pd.isna(row.get("float_value")):
@@ -337,12 +373,14 @@ class PlutoLoader(DataLoader):
                                 buffered_metrics[step][attr_name] = value
 
                                 # Flush buffer when it reaches threshold
-                                if len(buffered_metrics) >= self._metrics_stream_buffer_steps:
+                                if len(buffered_metrics) >= self._flush_every:
+                                    self._logger.info("Pluto: flushing %d metric steps (buffer full)", len(buffered_metrics))
                                     for buf_step in sorted(buffered_metrics.keys()):
                                         metrics_dict = buffered_metrics[buf_step]
                                         try:
                                             op.log(metrics_dict, step=buf_step)
                                             streamed_metrics_count += 1
+                                            op_log_call_count += 1
                                             any_logged = True
                                         except Exception:
                                             self._logger.debug(
@@ -356,30 +394,50 @@ class PlutoLoader(DataLoader):
                             ["file", "artifact", "file_series", "string_series", "histogram_series"]
                         )
                     ]
+                    
+                    if not other_df.empty:
+                        file_related = other_df[other_df["attribute_type"].isin(["file", "artifact", "file_series"])]
+                        if not file_related.empty:
+                            self._logger.debug("Processing batch with %d file/artifact/file_series rows", len(file_related))
 
                     for _, row in other_df.iterrows():
                         atype = row.get("attribute_type")
                         apath = self._sanitize_attribute_name(row.get("attribute_path"))
                         step = self._convert_step_to_int_optional(row.get("step"), step_multiplier)
 
+                        # Only downsample histogram_series (not file_series or string_series)
+                        # We want to preserve all files and all log lines
                         if step is not None and self._log_every > 1:
-                            if atype in ("file_series", "string_series", "histogram_series"):
+                            if atype in ("histogram_series",):
                                 if (step % self._log_every) != 0:
                                     continue
 
                         # --- Files (collect only) ---
                         if atype in ("file", "artifact", "file_series"):
-                            if self._skip_files:
-                                continue
+                            if atype == "file":
+                                file_count += 1
+                            elif atype == "artifact":
+                                artifact_count += 1
+                            elif atype == "file_series":
+                                file_series_count += 1
+                            
                             if self._max_files_per_run and all_file_items_queued >= self._max_files_per_run:
+                                self._logger.debug("Reached max_files_per_run limit (%d); skipping further files", self._max_files_per_run)
                                 continue
 
                             if isinstance(row.get("file_value"), dict):
                                 fv = row.get("file_value")
                                 file_path = files_directory / fv.get("path", "")
+                                
+                                # Log file discovery
+                                self._logger.debug("Processing file: path=%s, attribute=%s, type=%s, step=%s, exists=%s",
+                                                 fv.get("path", ""), apath, atype, step, file_path.exists())
+                                
                                 if file_path.exists() and hasattr(pluto, "Artifact"):
                                     try:
-                                        art = pluto.Artifact(data=str(file_path), caption=apath)
+                                        # Create artifact for files (no printing to stdout - keep files in Files tab only)
+                                        # Pass file path as first positional argument, caption as keyword arg
+                                        art = pluto.Artifact(str(file_path), caption=apath)
 
                                         # Use unique key to prevent overwrites when merging chunks
                                         # (multiple files can have the same apath; counter ensures uniqueness)
@@ -387,31 +445,40 @@ class PlutoLoader(DataLoader):
                                         all_files_list.append({key: art})
                                         all_file_items_queued += 1
 
-                                        if all_file_items_queued % 1000 == 0:
-                                            now = time.time()
-                                            if now - last_heartbeat_ts > 30:
-                                                self._logger.info("Collected %d files so far...", all_file_items_queued)
-                                                last_heartbeat_ts = now
-                                    except Exception:
-                                        self._logger.debug("Failed to create artifact", exc_info=True)
+                                        # Log every 50 files and at regular intervals
+                                        if all_file_items_queued % 50 == 0:
+                                            self._logger.info("Collected %d files so far (current: %s)...", all_file_items_queued, apath)
+                                        
+                                        now = time.time()
+                                        if now - last_heartbeat_ts > 30:
+                                            self._logger.info("Still collecting files... Total queued: %d", all_file_items_queued)
+                                            last_heartbeat_ts = now
+                                    except Exception as e:
+                                        self._logger.error("Failed to create artifact for %s: %s", apath, e, exc_info=True)
+                                else:
+                                    if not file_path.exists():
+                                        self._logger.warning("File does not exist: %s (attribute: %s)", file_path, apath)
+                                    if not hasattr(pluto, "Artifact"):
+                                        self._logger.warning("Pluto.Artifact not available; cannot upload files")
 
-                        # --- Text (collect only) ---
+                        # --- String Series (logs - dual route: print + Text artifacts) ---
+                        # NOTE: For large datasets (289k+ logs), Logs tab may fail with 502
+                        # but Text artifacts in Files tab will still work
                         elif atype == "string_series":
-                            if self._skip_text:
-                                continue
-                            if pd.notna(row.get("string_value")) and hasattr(pluto, "Text"):
-                                try:
-                                    txt = pluto.Text(str(row.get("string_value")), caption=apath)
-                                    if step not in all_texts:
-                                        all_texts[step] = {}
-                                    all_texts[step][apath] = txt
-                                except Exception:
-                                    self._logger.debug("Failed to create Text object", exc_info=True)
+                            string_series_count += 1
+                            if pd.notna(row.get("string_value")):
+                                text_value = str(row.get("string_value"))
+                                # Collect for Text artifacts (Files tab)
+                                if "stderr" in apath.lower() or "error" in apath.lower():
+                                    stderr_lines.append(text_value)
+                                    print(text_value, file=sys.stderr, flush=True)
+                                else:
+                                    stdout_lines.append(text_value)
+                                    print(text_value, file=sys.stdout, flush=True)
 
                         # --- Hist (collect only) ---
                         elif atype == "histogram_series":
-                            if self._skip_hist:
-                                continue
+                            histogram_series_count += 1
                             if isinstance(row.get("histogram_value"), dict) and hasattr(pluto, "Histogram"):
                                 try:
                                     hist = pluto.Histogram(row.get("histogram_value"))
@@ -425,15 +492,20 @@ class PlutoLoader(DataLoader):
                     del batch_table
                     gc.collect()
 
+            # Loop finished processing all batches
+            self._logger.info("Finished processing all %d batches from run_data", batch_count)
+
             # -------- Log all collected data at the end --------
 
             # Flush any remaining buffered metrics
             if buffered_metrics:
+                self._logger.info("Pluto: flushing final %d metric steps", len(buffered_metrics))
                 for buf_step in sorted(buffered_metrics.keys()):
                     metrics_dict = buffered_metrics[buf_step]
                     try:
                         op.log(metrics_dict, step=buf_step)
                         streamed_metrics_count += 1
+                        op_log_call_count += 1
                         any_logged = True
                     except Exception:
                         self._logger.debug("Failed to log final metrics batch for step %s", buf_step, exc_info=True)
@@ -446,6 +518,13 @@ class PlutoLoader(DataLoader):
                 file_chunk_size = 100
             file_sleep_seconds = float(os.getenv("NEPTUNE_EXPORTER_PLUTO_FILE_CHUNK_SLEEP", "0.5"))
 
+            self._logger.info("Starting file upload phase with %d total files, chunk_size=%d, sleep=%fs", 
+                            len(all_files_list), file_chunk_size, file_sleep_seconds)
+
+            if all_files_list:
+                self._logger.info("Pluto: logging %d files in chunks of %d (sleep=%fs between chunks)", 
+                                  len(all_files_list), file_chunk_size, file_sleep_seconds)
+
             for i in range(0, len(all_files_list), file_chunk_size):
                 chunk = all_files_list[i : i + file_chunk_size]
                 if chunk:
@@ -455,44 +534,78 @@ class PlutoLoader(DataLoader):
                         for item_dict in chunk:
                             files_dict.update(item_dict)
                         
+                        chunk_start = i
+                        chunk_end = min(i + len(chunk), len(all_files_list))
                         self._logger.info(
-                            "Pluto: logging file chunk %d-%d (%d artifacts)...",
-                            i, i + len(chunk), len(files_dict)
+                            "Pluto: uploading file chunk %d/%d (items %d-%d, %d artifacts)...",
+                            (i // file_chunk_size) + 1, (len(all_files_list) + file_chunk_size - 1) // file_chunk_size,
+                            chunk_start, chunk_end - 1, len(files_dict)
                         )
+                        
+                        # Log the actual file names being uploaded for this chunk
+                        file_names = [key.split("__")[0] for key in files_dict.keys()][:5]  # Show first 5
+                        if len(file_names) < len(files_dict):
+                            self._logger.debug("Uploading files: %s ... and %d more", 
+                                             ", ".join(file_names), len(files_dict) - len(file_names))
+                        else:
+                            self._logger.debug("Uploading files: %s", ", ".join(file_names))
+                        
                         op.log(files_dict)
+                        op_log_call_count += 1
                         self._maybe_flush(op)
                         any_logged = True
                         
+                        self._logger.info("File chunk %d/%d uploaded successfully", 
+                                        (i // file_chunk_size) + 1, (len(all_files_list) + file_chunk_size - 1) // file_chunk_size)
+                        
                         if file_sleep_seconds > 0:
+                            self._logger.debug("Sleeping for %.2fs before next chunk...", file_sleep_seconds)
                             time.sleep(file_sleep_seconds)
-                    except Exception:
-                        self._logger.exception("Failed to log file chunk %d-%d (non-fatal)", i, i + len(chunk))
+                    except Exception as e:
+                        self._logger.error("Failed to log file chunk %d-%d: %s (non-fatal)", chunk_start, chunk_end - 1, e, exc_info=True)
 
-            # Log texts by step
-            for step, text_dict in sorted(all_texts.items()):
-                if text_dict:
-                    try:
-                        op.log(text_dict, step=step)
-                        any_logged = True
-                    except Exception:
-                        self._logger.debug("Failed to log text batch for step %s", step, exc_info=True)
+            # String series already printed to stdout during batch processing
+            # Text entries (from logs/*.txt files) are handled as file artifacts, not logged here
+            # Nothing to do for texts - they've already been collected and will be reported in summary
 
             # Log hists by step
+            if all_hists:
+                self._logger.info("Pluto: logging %d histogram steps", len(all_hists))
             for step, hist_dict in sorted(all_hists.items()):
                 if hist_dict:
                     try:
                         op.log(hist_dict, step=step)
+                        op_log_call_count += 1
                         any_logged = True
                     except Exception:
                         self._logger.debug("Failed to log histogram batch for step %s", step, exc_info=True)
 
             self._maybe_flush(op)
 
+            # Log string_series as 2 Text artifacts (stdout.txt and stderr.txt)
+            if (stdout_lines or stderr_lines) and hasattr(pluto, "Text"):
+                texts_dict: dict[str, object] = {}
+                if stdout_lines:
+                    stdout_content = "\n".join(stdout_lines)
+                    texts_dict["logs/stdout"] = pluto.Text(stdout_content, caption="stdout")
+                if stderr_lines:
+                    stderr_content = "\n".join(stderr_lines)
+                    texts_dict["logs/stderr"] = pluto.Text(stderr_content, caption="stderr")
+                
+                if texts_dict:
+                    self._logger.info("Pluto: logging %d log text artifacts (stdout/stderr)", len(texts_dict))
+                    try:
+                        op.log(texts_dict)
+                        op_log_call_count += 1
+                        any_logged = True
+                    except Exception:
+                        self._logger.error("Failed to log string_series text artifacts", exc_info=True)
+
             self._logger.info(
-                "Pluto: streamed and logged %d metric steps (log_every=%s), "
-                "%d file artifacts, %d text steps, %d histogram steps",
-                streamed_metrics_count, self._log_every,
-                all_file_items_queued, len(all_texts), len(all_hists)
+                "Pluto run %s COMPLETE: %d op.log() calls, %d metric steps (log_every=%s), "
+                "%d file artifacts, %d text entries (string_series), %d histogram steps",
+                run_id_str, op_log_call_count, streamed_metrics_count, self._log_every,
+                all_file_items_queued, string_series_count, len(all_hists)
             )
 
         except KeyboardInterrupt:

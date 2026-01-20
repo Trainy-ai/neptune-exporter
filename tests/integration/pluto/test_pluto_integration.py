@@ -1,11 +1,30 @@
+"""Pluto Integration Smoke Test
+
+Minimal test that verifies basic Pluto SDK connectivity and functionality.
+
+What it tests:
+- Authentication works
+- Can create a run in the simple_test project
+- Can log 1 config parameter (integration_test=True)
+- Can log 1 metric (integration_metric=0.123)
+
+What it uploads to Pluto:
+- Total: 2 items (1 config + 1 metric)
+- Project: simple_test (or PLUTO_PROJECT env var)
+- Run name: neptune-exporter-integration-test
+
+This is a health check test - not comprehensive.
+"""
+
 import os
 import pytest
 
 def test_pluto_integration_smoke():
     api_key = os.getenv("PLUTO_API_KEY")
-    project = os.getenv("PLUTO_PROJECT", "ryan")
-    if not api_key:
-        pytest.skip("Set PLUTO_API_KEY to run Pluto integration tests")
+    project = os.getenv("PLUTO_PROJECT", "simple_test")
+    # Don't require API key - pluto.init() will use stored credentials
+    # if not api_key:
+    #     pytest.skip("Set PLUTO_API_KEY to run Pluto integration tests")
 
     try:
         import pluto
