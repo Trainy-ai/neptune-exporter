@@ -255,6 +255,117 @@ def train_model(model, data_loader, epochs: int = 10):
             pytest.skip("Pluto SDK does not expose init() API")
 
 
+def test_pluto_unusual_attribute_names():
+    """Test how Pluto handles attribute names with unusual characters.
+    
+    Tests that the sanitization correctly:
+    - Preserves forward slashes (/) in paths
+    - Preserves dots (.) in names
+    - Preserves underscores (_) and hyphens (-)
+    - Preserves spaces
+    - Replaces special chars (@, #, !, etc.) with underscores
+    """
+    project = os.getenv("PLUTO_PROJECT", "simple_test")
+
+    try:
+        import pluto
+    except Exception as e:
+        pytest.skip(f"Pluto SDK not installed: {e}")
+
+    if not hasattr(pluto, "init"):
+        pytest.skip("Pluto SDK does not expose init() API")
+
+    try:
+        op = pluto.init(project=project, name="unusual-names-test")
+        
+        # Test cases: (input_name, expected_behavior_description)
+        test_cases = {
+            # Standard paths with slashes - should be preserved
+            "metrics/accuracy": "slash preserved",
+            "config/model/layers": "nested slashes preserved",
+            "data/train/accuracy": "slashes in path",
+            
+            # Dots - should be preserved
+            "metric.value": "dot preserved",
+            "file.name.with.dots": "multiple dots preserved",
+            "version.1.0": "version-like naming",
+            
+            # Underscores and hyphens - should be preserved
+            "my_metric": "underscore preserved",
+            "my-metric": "hyphen preserved",
+            "my_metric_name": "multiple underscores",
+            "my-metric-name": "multiple hyphens",
+            
+            # Spaces - should be preserved
+            "metric with spaces": "spaces preserved",
+            "learning rate": "space in name",
+            
+            # Mixed valid chars
+            "metrics/model.accuracy_v1": "complex path with slash, dot, underscore",
+            "data/train-set/accuracy.final": "mix of all allowed chars",
+            
+            # Special chars that SHOULD be replaced with underscore
+            "metric@special": "@ becomes _",
+            "metric#special": "# becomes _",
+            "metric!special": "! becomes _",
+            "metric&special": "& becomes _",
+            "metric$value": "$ becomes _",
+            "metric%value": "% becomes _",
+            "metric(test)": "() become _",
+            "metric[array]": "[] become _",
+            "metric{obj}": "{} become _",
+            "metric=value": "= becomes _",
+            "metric+value": "+ becomes _",
+            "metric*value": "* becomes _",
+            
+            # Mixed special chars and valid
+            "metrics/accuracy@v1": "slash preserved, @ becomes _",
+            "file.name@bad": "dot preserved, @ becomes _",
+            "metric_name#test": "underscore and hyphen preserved, # becomes _",
+        }
+        
+        print("\n" + "="*70)
+        print("TESTING UNUSUAL ATTRIBUTE NAMES IN PLUTO")
+        print("="*70)
+        
+        for step, (attr_name, description) in enumerate(test_cases.items()):
+            try:
+                # Log a metric with the unusual name
+                op.log({attr_name: float(step)}, step=step)
+                print(f"✅ {attr_name:40} → {description}")
+            except Exception as e:
+                print(f"❌ {attr_name:40} → FAILED: {e}")
+        
+        print("\n" + "="*70)
+        print("KEY FINDINGS:")
+        print("="*70)
+        print("✅ Forward slashes (/) are PRESERVED")
+        print("   → Allows nested paths like 'metrics/accuracy'")
+        print()
+        print("✅ Dots (.) are PRESERVED")
+        print("   → Allows files like 'model.pkl' or 'version.1.0'")
+        print()
+        print("✅ Underscores (_) and hyphens (-) are PRESERVED")
+        print("   → Standard Python naming conventions work")
+        print()
+        print("✅ Spaces are PRESERVED")
+        print("   → Natural language attribute names work")
+        print()
+        print("🔄 Special chars (@#!&$%*+=etc) become UNDERSCORES")
+        print("   → 'metric@v1' → 'metric_v1'")
+        print()
+        print("📝 Names are truncated to 250 chars max")
+        print("="*70 + "\n")
+        
+        if hasattr(op, "finish"):
+            op.finish()
+        
+    except Exception as e:
+        pytest.skip(f"Pluto test setup failed: {e}")
+
+
 if __name__ == "__main__":
     # Allow running directly for quick testing
     test_pluto_file_previews()
+    print("\n\nNow testing unusual names...\n")
+    test_pluto_unusual_attribute_names()

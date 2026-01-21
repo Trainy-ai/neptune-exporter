@@ -184,24 +184,6 @@ uv run neptune-exporter export -p "workspace/proj" --exporter neptune2 --runs-qu
     --loader pluto \
     --data-path ./exports/data \
     --files-path ./exports/files
-
-  # Pluto configuration (optional environment variables)
-  export NEPTUNE_EXPORTER_PLUTO_PROJECT_NAME="workspace/project"  # Override target project
-  
-  # BATCH_ROWS: Increase for faster processing, decrease to reduce RAM usage
-  export NEPTUNE_EXPORTER_PLUTO_BATCH_ROWS=50000     # Default: 10000. Higher = more RAM, faster (fewer file reads)
-  
-  # LOG_EVERY: Downsample metrics/histograms (1 = lossless but slower, higher = lossy but faster)
-  export NEPTUNE_EXPORTER_PLUTO_LOG_EVERY=1          # Default: 50. Set to 1 for lossless, 50+ for faster uploads
-  
-  # FLUSH_EVERY: Metrics buffer size before API call (increase for speed, decrease for RAM)
-  export NEPTUNE_EXPORTER_PLUTO_FLUSH_EVERY=3000     # Default: 1000. Higher = more RAM, fewer API calls (faster)
-  
-  # FILE_CHUNK_SIZE: Files per upload batch (increase for speed, decrease for stability)
-  export NEPTUNE_EXPORTER_PLUTO_FILE_CHUNK_SIZE=100  # Default: 100. Higher = faster, more risk of 502 errors
-  
-  # FILE_CHUNK_SLEEP: Delay between file batches (decrease for speed, increase for stability)
-  export NEPTUNE_EXPORTER_PLUTO_FILE_CHUNK_SLEEP=0.1 # Default: 0.5s. Lower = faster, more risk of rate limits
   ```
 
   > [!NOTE]
@@ -297,9 +279,9 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
   - Requires `pluto-ml` SDK installed and authentication (uses stored credentials from environment).
   - Uses `pluto.init()` to create Ops (runs) with configurable batching and chunking for large datasets.
   - Metrics are streamed in chunks to avoid memory issues with large step datasets. Uses configurable buffer flush threshold.
-  - Files are uploaded in chunks with configurable sleep intervals to prevent 502 errors and API rate limits.
+  - Files are uploaded in chunks with configurable sleep intervals to prevent errors and API rate limits.
   - String series (logs) are collected as Text artifacts in Files tab (`logs/stdout.txt`, `logs/stderr.txt`). Also printed to stdout/stderr for small datasets, but large datasets may cause Logs tab to fail with 502 errors.
-  - File deduplication: When multiple `file_series` entries reference the same file, only the last version is kept (matches WandB behavior).
+  - File deduplication: When multiple `file_series` entries reference the same file, only the last version is kept.
   - Supports decimal steps natively (no `--step-multiplier` needed). Histograms are logged by step.
   - Skips already-loaded runs by checking **local cache file** (`.neptune_exporter_pluto_loaded_runs.txt` in current directory or `NEPTUNE_EXPORTER_PLUTO_BASE_DIR`). Cache stores `project_id::run_name` keys. Delete this file or run from a different directory to re-upload the same runs. The loader does **not** check the Pluto backend for existing runs.
 
@@ -332,8 +314,7 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
 - **Pluto:**
   - Target project is specified via `NEPTUNE_EXPORTER_PLUTO_PROJECT_NAME` env var (e.g., `"workspace/project"`), otherwise uses Neptune `project_id` directly.
   - Neptune runs become Pluto Ops with their original `run_id` (or `custom_run_id`) as the Op name.
-  - Neptune's `sys/name` (experiment name) is stored as tags (`import:neptune`, `import_project:<project_id>`) for traceability.
-  - Fork relationships are not natively supported (Pluto Ops don't have parent/fork concepts).
+  - Neptune's `sys/name` (experiment name) is stored as tags (`import:neptune`, `import_project:<project_id>`) for traceability. Fork relationships are not natively supported
 
 ## Attribute/type mapping (detailed)
 
@@ -344,11 +325,11 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
   - Comet: logged as parameters with native types (string_set → list).
   - LitLogger: logged as experiment metadata (string key-value pairs, searchable/filterable in the UI).
   - Minfx: logged with native types (datetime → timestamp, string_set → StringSet). Preserves `sys/hostname`, `sys/tags`, and `sys/group_tags` from original data; other `sys/*` attributes are skipped as they're managed by Neptune.
-  - Pluto: logged via `op.update_config()` with native types (datetime → ISO string, string_set → list). Attribute paths are sanitized (alphanumeric + `_-.`, max 250 chars).
+  - Pluto: logged with native types (datetime → ISO string, string_set → list).
 - **Float series** (`float_series`):
   - MLflow/W&B/Comet/LitLogger: logged as metrics using the integer step (`--step-multiplier` applied). Timestamps are forwarded when present.
   - ZenML: aggregated into summary statistics (min/max/final/count) stored as metadata, since the Model Control Plane doesn't have native time-series visualization.
-  - Pluto: logged via `op.log()` with decimal steps preserved. Downsampled by `LOG_EVERY` factor (default: 50, set to 1 for lossless). Buffered in memory and flushed every `FLUSH_EVERY` steps (default: 1000) to avoid RAM exhaustion on large step datasets.
+  - Pluto: logged with decimal steps preserved. Large step datasets are handled efficiently to avoid memory issues.
 - **String series** (`string_series`):
   - MLflow: saved as artifacts (one text file per series).
   - W&B: logged as a Table with columns `step`, `value`, `timestamp`.
@@ -356,7 +337,7 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
   - Comet: uploaded as text assets.
   - LitLogger: uploaded as text assets.
   - Minfx: logged as StringSeries with steps preserved.
-  - Pluto: collected and uploaded as 2 Text artifacts (`logs/stdout.txt` and `logs/stderr.txt`) in Files tab. Attribute paths containing "stderr" or "error" route to stderr, others to stdout. Also printed to stdout/stderr for Logs tab visibility, but large datasets may cause Logs tab API to fail with 502 errors (Text artifacts still work).
+  - Pluto: collected and uploaded as Text artifacts.
 - **Histogram series** (`histogram_series`):
   - MLflow: uploaded as artifacts containing the histogram payload.
   - W&B: logged as `wandb.Histogram`.
@@ -364,7 +345,7 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
   - Comet: logged as `histogram_3d`.
   - LitLogger: uploaded as image containing a histogram plot and as artifacts containing the histogram payload.
   - Minfx: not uploaded (skipped - not supported in Neptune v2 API).
-  - Pluto: logged via `op.log()` as `pluto.Histogram` objects, organized by step. Downsampled by `LOG_EVERY` factor.
+  - Pluto: logged as histogram objects organized by step.
 - **Files** (`file`) and **file series** (`file_series`):
   - Downloaded to `--files-path/<sanitized_project_id>/...` with relative paths stored in `file_value.path`.
   - MLflow/W&B: uploaded as artifacts. File series include the step in the artifact name/path so steps remain distinguishable.
@@ -372,7 +353,7 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
   - Comet: uploaded as assets. Comet detects images and uploads them as images.
   - LitLogger: uploaded as artifacts.
   - Minfx: uploaded with auto-detected file extensions (via magic bytes) for proper UI rendering.
-  - Pluto: uploaded via `pluto.Artifact(file_path, caption=attribute_path)` as artifacts. File series are deduplicated by (attribute_path, file_path) keeping the last version only (matches WandB behavior). Uploaded in chunks of `FILE_CHUNK_SIZE` (default: 100) with `FILE_CHUNK_SLEEP` seconds (default: 0.5) between chunks to prevent 502 errors.
+  - Pluto: uploaded as artifacts.
 - **Attribute names**:
   - MLflow: sanitized to allowed chars (alphanumeric + `_-. /`), truncated at 250 chars.
   - W&B: sanitized to allowed pattern (`^[_a-zA-Z][_a-zA-Z0-9]*$`); invalid chars become `_`, and names are forced to start with a letter or underscore.
@@ -380,7 +361,7 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
   - Comet: sanitized to allowed pattern (`^[_a-zA-Z][_a-zA-Z0-9]*$`); invalid chars become `_`, and names are forced to start with a letter or underscore.
   - LitLogger: sanitized to allowed pattern (`^[a-zA-Z0-9_-]+$`); invalid chars become `_`. Experiment and teamspace names are truncated to 64 chars.
   - Minfx: Skips `sys/*` attributes except allowed ones (`sys/hostname`, `sys/tags`, `sys/group_tags`).
-  - Pluto: sanitized to allowed chars (alphanumeric + `_-.`); invalid chars become `_`, truncated to 250 chars max.
+  - Pluto: attribute paths are preserved as-is (e.g., `metrics/accuracy`, `config/lr`). Invalid chars are replaced with underscores, and names are truncated to 250 chars max.
 
 For details on Neptune attribute types, see the [documentation](https://docs.neptune.ai/attribute_types).
 
