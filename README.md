@@ -89,6 +89,7 @@ Options:
 | `--api-token`                            | Pass the token explicitly instead of using the `NEPTUNE_API_TOKEN` environment variable.                                                                                                                                                                                                      |
 | `--no-progress`, `-v`/`--verbose`, `--log-file` | Progress and logging controls for the CLI.                                                                                                                                                                                                                                                    |
 | `--runs-query` | `neptune2` only: Specify [Neptune Query Language](https://docs-legacy.neptune.ai/usage/nql/) syntax to filter runs to export.|
+| `--include-metric-previews`| `neptune3` only: Include [Metric Previews](https://docs.neptune.ai/metric_previews) in the export. Preview metrics will be exported as "normal" metrics and `preview_completion` information will be discarded.|
 
 #### Export examples
 
@@ -206,6 +207,10 @@ uv run neptune-exporter export -p "workspace/proj" --exporter neptune2 --runs-qu
   > [!NOTE]
   > MLflow and W&B only accept integers. If your Neptune steps contain decimals, use the `--step-multiplier` option to convert the step values to integers. Pick a single multiplier (e.g. `1000` for millisteps) and use it consistently for all loads so that every series stays aligned.
   > Default is `1` (no scaling).
+
+  > [!NOTE]
+  > To load data into a **W&B Dedicated Cloud** instance (single-tenant), set the `WANDB_BASE_URL` environment variable to your instance URL (for example, `https://<your-instance>.wandb.io`) before running the load command.  
+  > The W&B loader will then create projects and runs directly in that Dedicated instance instead of multi-tenant SaaS (wandb.ai).
 
   > [!NOTE]
   > For ZenML, ensure you are logged into a ZenML server via `zenml login` before running the load command. The ZenML loader does not use `--step-multiplier` since it aggregates time-series into summary statistics rather than logging individual points. To store Neptune files in your ZenML artifact store (e.g., S3, GCS, Azure), configure a cloud [artifact store](https://docs.zenml.io/stacks/stack-components/artifact-stores) in your active stack using `zenml stack set <stack-name>` before running the load.
