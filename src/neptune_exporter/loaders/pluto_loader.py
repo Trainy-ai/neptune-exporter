@@ -433,11 +433,25 @@ class PlutoLoader(DataLoader):
                                 self._logger.debug("Processing file: path=%s, attribute=%s, type=%s, step=%s, exists=%s",
                                                  fv.get("path", ""), apath, atype, step, file_path.exists())
                                 
-                                if file_path.exists() and hasattr(pluto, "Artifact"):
+                                if file_path.exists():
                                     try:
-                                        # Create artifact for files (no printing to stdout - keep files in Files tab only)
-                                        # Pass file path as first positional argument, caption as keyword arg
-                                        art = pluto.Artifact(str(file_path), caption=apath)
+                                        # Detect file types for appropriate preview:
+                                        # - Images: use pluto.Image() for inline preview
+                                        # - Text: use pluto.Text() for code/log preview
+                                        # - Others: use pluto.Artifact() for generic file storage
+                                        file_ext = file_path.suffix.lower()
+                                        is_image = file_ext in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"}
+                                        is_text = file_ext in {".txt", ".log", ".patch", ".diff", ".md", ".py", ".json", ".yaml", ".yml", ".csv"}
+                                        
+                                        if is_image and hasattr(pluto, "Image"):
+                                            art = pluto.Image(str(file_path), caption=apath)
+                                        elif is_text and hasattr(pluto, "Text"):
+                                            # Pass file path directly to pluto.Text (don't read into memory)
+                                            art = pluto.Text(str(file_path), caption=apath)
+                                        elif hasattr(pluto, "Artifact"):
+                                            art = pluto.Artifact(str(file_path), caption=apath)
+                                        else:
+                                            continue
 
                                         # Use unique key to prevent overwrites when merging chunks
                                         # (multiple files can have the same apath; counter ensures uniqueness)
@@ -454,12 +468,10 @@ class PlutoLoader(DataLoader):
                                             self._logger.info("Still collecting files... Total queued: %d", all_file_items_queued)
                                             last_heartbeat_ts = now
                                     except Exception as e:
-                                        self._logger.error("Failed to create artifact for %s: %s", apath, e, exc_info=True)
+                                        self._logger.error("Failed to create artifact/image for %s: %s", apath, e, exc_info=True)
                                 else:
                                     if not file_path.exists():
                                         self._logger.warning("File does not exist: %s (attribute: %s)", file_path, apath)
-                                    if not hasattr(pluto, "Artifact"):
-                                        self._logger.warning("Pluto.Artifact not available; cannot upload files")
 
                         # --- String Series (logs - dual route: print + Text artifacts) ---
                         # NOTE: For large datasets (289k+ logs), Logs tab may fail with 502
