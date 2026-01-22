@@ -8,6 +8,7 @@ Neptune Exporter is a CLI tool to move Neptune experiments (version `2.x` or `3.
 - MLflow
 - Weights & Biases
 - ZenML
+- Pluto
 
 ## What it does
 
@@ -29,6 +30,7 @@ Neptune Exporter is a CLI tool to move Neptune experiments (version `2.x` or `3.
   - Comet workspace and API key, set with `COMET_WORKSPACE`/`--comet-workspace` and `COMET_API_KEY`/`--comet-api-key`.
   - Lightning AI LitLogger requires auth credentials (set via `lightning login` or `--litlogger-user-id` and `--litlogger-api-key`). Optionally specify `--litlogger-owner` for the user or organization name where teamspaces will be created (defaults to the authenticated user).
   - Minfx project and API token, set with `MINFX_PROJECT`/`--minfx-project` and `MINFX_API_TOKEN`/`--minfx-api-token`.
+  - Pluto SDK (Trainy.ai): install `pluto-ml` (or use `--extra pluto` during `uv sync`). Authenticate via `pluto login <api-key>` or set `PLUTO_API_KEY` environment variable. Optionally set `NEPTUNE_EXPORTER_PLUTO_PROJECT_NAME` to override the target project name.
 
 ## Installation
 
@@ -58,6 +60,7 @@ Available optional dependencies:
 - `mlflow` - for MLflow loader
 - `wandb` - for Weights & Biases loader
 - `zenml` - for ZenML loader
+- `pluto` - for Pluto loader (Trainy.ai)
 
 Run the CLI:
 
@@ -200,6 +203,18 @@ uv run neptune-exporter export -p "workspace/proj" --exporter neptune2 --runs-qu
   > [!NOTE]
   > For Minfx, the `--step-multiplier` option is not needed since Neptune v2 natively supports float steps. The loader recreates runs in a Neptune-compatible backend and stores the original run ID in `import/original_run_id` for tracking and duplicate prevention.
 
+  > [!NOTE]
+  > For Pluto, the loader uses decimal steps natively (no `--step-multiplier` needed). Authentication is required via `pluto login <api-key>` or `PLUTO_API_KEY` environment variable. Optional environment knobs:
+  > - `NEPTUNE_EXPORTER_PLUTO_PROJECT_NAME`: override destination project name.
+  > - `NEPTUNE_EXPORTER_PLUTO_BASE_DIR`: base directory for local Pluto working files and cache (default: current dir).
+  > - `NEPTUNE_EXPORTER_PLUTO_LOADED_CACHE`: explicit path to the cache file (default: `.pluto_upload_cache` under base dir).
+  > - `NEPTUNE_EXPORTER_PLUTO_BATCH_ROWS`: Arrow-to-pandas batch size (default: 10000).
+  > - `NEPTUNE_EXPORTER_PLUTO_LOG_EVERY`: downsample metric steps by factor N (default: 50; set to 1 for lossless).
+  > - `NEPTUNE_EXPORTER_PLUTO_FLUSH_EVERY`: buffered metric step flush threshold (default: 1000).
+  > - `NEPTUNE_EXPORTER_PLUTO_FILE_CHUNK_SIZE`: number of files per upload chunk (default: 100).
+  > - `NEPTUNE_EXPORTER_PLUTO_FILE_CHUNK_SLEEP`: seconds to sleep between chunks (default: 0.5).
+  > - `NEPTUNE_EXPORTER_PLUTO_MAX_FILES_PER_RUN`: hard cap on uploaded files per run (0 disables; default: 0).
+
 ## Data layout on disk
 
 - Parquet path:
@@ -277,13 +292,12 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
   - Skips histogram series (not supported in Neptune v2 API) and auto-generated source code diffs.
 - **Pluto loader**:
   - Requires `pluto-ml` SDK installed and authentication (uses stored credentials from environment).
-  - Uses `pluto.init()` to create Ops (runs) with configurable batching and chunking for large datasets.
-  - Metrics are streamed in chunks to avoid memory issues with large step datasets. Uses configurable buffer flush threshold.
-  - Files are uploaded in chunks with configurable sleep intervals to prevent errors and API rate limits.
-  - String series (logs) are collected as Text artifacts in Files tab (`logs/stdout.txt`, `logs/stderr.txt`). Also printed to stdout/stderr for small datasets, but large datasets may cause Logs tab to fail with 502 errors.
-  - File deduplication: When multiple `file_series` entries reference the same file, only the last version is kept.
+  - Handles large runs via streaming batches and chunked uploads; knobs are configurable via environment variables (see above).
+  - Metrics are buffered and flushed in steps; optional downsampling via `NEPTUNE_EXPORTER_PLUTO_LOG_EVERY`.
+  - Files are uploaded with type-aware previews (images via `Image`, text via `Text`, others via `Artifact`) in manageable chunks.
+  - String series (logs) are uploaded as two Text artifacts: `logs/stdout` and `logs/stderr` (and also printed to the console during load).
   - Supports decimal steps natively (no `--step-multiplier` needed). Histograms are logged by step.
-  - Skips already-loaded runs by checking **local cache file** (`.neptune_exporter_pluto_loaded_runs.txt` in current directory or `NEPTUNE_EXPORTER_PLUTO_BASE_DIR`). Cache stores `project_id::run_name` keys. Delete this file or run from a different directory to re-upload the same runs. The loader does **not** check the Pluto backend for existing runs.
+  - Skips already-loaded runs by checking **local cache file** (`.pluto_upload_cache` in current directory or `NEPTUNE_EXPORTER_PLUTO_BASE_DIR`). Cache stores `project_id::run_name` keys. Delete this file or run from a different directory to re-upload the same runs. The loader does **not** check the Pluto backend for existing runs.
 
 ## Experiment/run mapping to targets
 
@@ -353,7 +367,7 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
   - Comet: uploaded as assets. Comet detects images and uploads them as images.
   - LitLogger: uploaded as artifacts.
   - Minfx: uploaded with auto-detected file extensions (via magic bytes) for proper UI rendering.
-  - Pluto: uploaded as artifacts.
+  - Pluto: uploaded with type-aware previews (images via `Image`, text via `Text`, others via `Artifact`). File series include `/step_{n}` suffix for `n>0`.
 - **Attribute names**:
   - MLflow: sanitized to allowed chars (alphanumeric + `_-. /`), truncated at 250 chars.
   - W&B: sanitized to allowed pattern (`^[_a-zA-Z][_a-zA-Z0-9]*$`); invalid chars become `_`, and names are forced to start with a letter or underscore.
@@ -361,7 +375,7 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
   - Comet: sanitized to allowed pattern (`^[_a-zA-Z][_a-zA-Z0-9]*$`); invalid chars become `_`, and names are forced to start with a letter or underscore.
   - LitLogger: sanitized to allowed pattern (`^[a-zA-Z0-9_-]+$`); invalid chars become `_`. Experiment and teamspace names are truncated to 64 chars.
   - Minfx: Skips `sys/*` attributes except allowed ones (`sys/hostname`, `sys/tags`, `sys/group_tags`).
-  - Pluto: attribute paths are preserved as-is (e.g., `metrics/accuracy`, `config/lr`). Invalid chars are replaced with underscores, and names are truncated to 250 chars max.
+  - Pluto: attribute paths are preserved (invalid chars → `_`, max length 250 chars).
 
 For details on Neptune attribute types, see the [documentation](https://docs.neptune.ai/attribute_types).
 

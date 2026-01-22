@@ -74,19 +74,51 @@ class PlutoLoader(DataLoader):
         self._pluto_base_dir.mkdir(parents=True, exist_ok=True)
 
         # Duplicate cache
-        cache_default = self._pluto_base_dir / ".neptune_exporter_pluto_loaded_runs.txt"
-        self._loaded_cache_path = Path(os.getenv("NEPTUNE_EXPORTER_PLUTO_LOADED_CACHE", str(cache_default))).resolve()
+        # Default cache location renamed for clarity
+        cache_default = self._pluto_base_dir / ".pluto_upload_cache"
+        self._loaded_cache_path = Path(
+            os.getenv("NEPTUNE_EXPORTER_PLUTO_LOADED_CACHE", str(cache_default))
+        ).resolve()
 
         self._loaded_run_keys: set[str] = set()
         try:
+            # Read current cache (new name)
             if self._loaded_cache_path.exists():
                 self._loaded_run_keys = set(
                     line.strip()
                     for line in self._loaded_cache_path.read_text(encoding="utf-8").splitlines()
                     if line.strip()
                 )
+            else:
+                # Backward-compat: also read legacy cache filename if present
+                legacy_cache = self._pluto_base_dir / ".neptune_exporter_pluto_loaded_runs.txt"
+                if legacy_cache.exists():
+                    self._loaded_run_keys = set(
+                        line.strip()
+                        for line in legacy_cache.read_text(encoding="utf-8").splitlines()
+                        if line.strip()
+                    )
+                    try:
+                        # Touch the new cache file with migrated contents
+                        self._loaded_cache_path.parent.mkdir(parents=True, exist_ok=True)
+                        self._loaded_cache_path.write_text(
+                            "\n".join(sorted(self._loaded_run_keys)) + "\n", encoding="utf-8"
+                        )
+                        self._logger.info(
+                            "Migrated legacy cache %s to %s",
+                            str(legacy_cache),
+                            str(self._loaded_cache_path),
+                        )
+                    except Exception:
+                        self._logger.debug("Failed to migrate legacy cache file", exc_info=True)
         except Exception:
             self._logger.debug("Failed reading local Pluto loaded-run cache", exc_info=True)
+
+        # Log resolved cache path for visibility
+        try:
+            self._logger.info("Pluto loaded-run cache path: %s", str(self._loaded_cache_path))
+        except Exception:
+            pass
 
         # Import Pluto
         try:
@@ -128,8 +160,19 @@ class PlutoLoader(DataLoader):
             self._loaded_cache_path.parent.mkdir(parents=True, exist_ok=True)
             with self._loaded_cache_path.open("a", encoding="utf-8") as f:
                 f.write(key + "\n")
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except Exception:
+                    # fsync may not be available on some filesystems; non-fatal
+                    pass
+            self._logger.info("Pluto: recorded loaded run in cache: %s -> %s", key, str(self._loaded_cache_path))
         except Exception:
-            self._logger.debug("Failed writing local Pluto loaded-run cache", exc_info=True)
+            self._logger.error(
+                "Failed writing local Pluto loaded-run cache at %s",
+                str(self._loaded_cache_path),
+                exc_info=True,
+            )
 
     def _sanitize_attribute_name(self, attribute_path: str) -> str:
         sanitized = re.sub(r"[^a-zA-Z0-9_\-\.\s/]", "_", str(attribute_path))
@@ -181,28 +224,15 @@ class PlutoLoader(DataLoader):
         run_name: str,
         experiment_id: Optional[TargetExperimentId],
     ) -> Optional[TargetRunId]:
+        """Check if run was already loaded (via cache only).
+        
+        Pluto SDK doesn't have list_runs/find_run methods, so we only check
+        the local cache file. To enable true deduplication, use run_id parameter
+        in pluto.init() so Pluto resumes existing runs by external ID.
+        """
         key = self._run_key(project_id, run_name)
         if key in self._loaded_run_keys:
             return TargetRunId(run_name)
-
-        client = self._client
-        if client is None:
-            return None
-
-        try:
-            if hasattr(client, "find_run"):
-                found = client.find_run(project=str(experiment_id), name=run_name)
-                if found:
-                    rid = getattr(found, "id", str(found))
-                    return TargetRunId(str(rid))
-            if hasattr(client, "list_runs"):
-                for r in client.list_runs(project=str(experiment_id)):
-                    if getattr(r, "name", None) == run_name:
-                        rid = getattr(r, "id", run_name)
-                        return TargetRunId(str(rid))
-        except Exception:
-            self._logger.debug("Pluto client run lookup failed (non-fatal)", exc_info=True)
-
         return None
 
     def create_run(
@@ -221,16 +251,14 @@ class PlutoLoader(DataLoader):
             self._logger.info("Run '%s' already loaded (cache hit); skipping", run_name)
             return TargetRunId(run_name)
 
-        already = self.find_run(project_id, run_name, experiment_id)
-        if already is not None:
-            self._logger.info("Run '%s' already loaded (API hit); skipping", run_name)
-            self._mark_run_loaded(key)
-            return already
-
         tags = ["import:neptune", f"import_project:{project_id}"]
         pluto_project = str(experiment_id) if experiment_id else str(project_id)
 
         self._ensure_runtime_dirs(pluto_project, run_name)
+
+        # Generate stable external_id from project_id + run_name
+        # This allows Pluto to detect and resume existing runs instead of creating duplicates
+        external_id = f"{project_id}::{run_name}"
 
         op = pluto.init(
             dir=str(self._pluto_base_dir),
@@ -238,6 +266,7 @@ class PlutoLoader(DataLoader):
             name=run_name,
             config=None,
             tags=tags,
+            run_id=external_id,  # Enable Pluto-side deduplication
         )
 
         run_id = getattr(getattr(op, "settings", None), "_op_id", None) or run_name
@@ -246,7 +275,7 @@ class PlutoLoader(DataLoader):
         self._ops[run_id_str] = op
         self._run_id_to_key[run_id_str] = key
 
-        self._logger.info("Created Pluto Op run '%s' with id %s", run_name, run_id_str)
+        self._logger.info("Created Pluto Op run '%s' with id %s (external_id=%s)", run_name, run_id_str, external_id)
         return TargetRunId(run_id_str)
 
     def upload_run_data(
@@ -268,6 +297,8 @@ class PlutoLoader(DataLoader):
             raise RuntimeError(f"No active Pluto Op for run {run_id_str}")
 
         pluto = self._ensure_pluto()
+        # Preserve loaded key before _finish_op clears internal maps
+        loaded_key: Optional[str] = self._run_id_to_key.get(run_id_str)
         self._logger.info("Pluto SDK ensured, starting data processing for run %s", run_id_str)
         
         # Log detected configuration
@@ -453,9 +484,11 @@ class PlutoLoader(DataLoader):
                                         else:
                                             continue
 
-                                        # Use unique key to prevent overwrites when merging chunks
-                                        # (multiple files can have the same apath; counter ensures uniqueness)
-                                        key = f"{apath}__{step if step is not None else 'nostep'}__{all_file_items_queued}"
+                                        # Include step in key for file_series only if non-zero (flatten single-step series)
+                                        if step is not None and step > 0:
+                                            key = f"{apath}/step_{step}"
+                                        else:
+                                            key = apath
                                         all_files_list.append({key: art})
                                         all_file_items_queued += 1
 
@@ -633,9 +666,9 @@ class PlutoLoader(DataLoader):
         if not any_logged:
             raise RuntimeError(f"Pluto loader finished run {run_id_str} but did not log any data.")
 
-        key = self._run_id_to_key.get(run_id_str)
-        if key:
-            self._mark_run_loaded(key)
+        # Mark run as loaded using preserved key, after successful upload
+        if loaded_key:
+            self._mark_run_loaded(loaded_key)
 
         self._logger.info("Uploaded data for Pluto Op run %s", run_id_str)
 
