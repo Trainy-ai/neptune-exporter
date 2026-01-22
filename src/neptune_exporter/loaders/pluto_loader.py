@@ -115,10 +115,7 @@ class PlutoLoader(DataLoader):
             self._logger.debug("Failed reading local Pluto loaded-run cache", exc_info=True)
 
         # Log resolved cache path for visibility
-        try:
-            self._logger.info("Pluto loaded-run cache path: %s", str(self._loaded_cache_path))
-        except Exception:
-            pass
+        self._logger.info("Pluto loaded-run cache path: %s", str(self._loaded_cache_path))
 
         # Import Pluto
         try:
@@ -165,7 +162,7 @@ class PlutoLoader(DataLoader):
                     os.fsync(f.fileno())
                 except Exception:
                     # fsync may not be available on some filesystems; non-fatal
-                    pass
+                    self._logger.debug("os.fsync call failed (non-fatal)", exc_info=True)
             self._logger.info("Pluto: recorded loaded run in cache: %s -> %s", key, str(self._loaded_cache_path))
         except Exception:
             self._logger.error(
