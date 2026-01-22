@@ -18,3 +18,8 @@ wheels/
 wandb/
 exports/
 .DS_Store
+
+context/
+.pluto_upload_cache.txt
+/neptune_exporter_*
+.pluto/

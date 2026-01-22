@@ -210,7 +210,7 @@ uv run neptune-exporter export -p "workspace/proj" --exporter neptune2 --runs-qu
   > Optional environment variables:
   > - `NEPTUNE_EXPORTER_PLUTO_PROJECT_NAME`: override destination project name.
   > - `NEPTUNE_EXPORTER_PLUTO_BASE_DIR`: base directory for local Pluto working files and cache (default: current dir).
-  > - `NEPTUNE_EXPORTER_PLUTO_LOADED_CACHE`: explicit path to the cache file (default: `.pluto_upload_cache` under base dir).
+  > - `NEPTUNE_EXPORTER_PLUTO_LOADED_CACHE`: explicit path to the cache file (default: `.pluto_upload_cache.txt` under base dir).
   > - `NEPTUNE_EXPORTER_PLUTO_BATCH_ROWS`: Arrow-to-pandas batch size (default: 10000).
   > - `NEPTUNE_EXPORTER_PLUTO_LOG_EVERY`: downsample metric steps by factor N (default: 50; set to 1 for lossless).
   > - `NEPTUNE_EXPORTER_PLUTO_FLUSH_EVERY`: buffered metric step flush threshold (default: 1000).
@@ -300,7 +300,7 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
   - Files are uploaded with type-aware previews (images via `Image`, text via `Text`, others via `Artifact`) in manageable chunks.
   - String series (logs) are uploaded as two Text artifacts: `logs/stdout` and `logs/stderr` (and also printed to the console during load).
   - Supports decimal steps natively (no `--step-multiplier` needed). Histograms are logged by step.
-  - Skips already-loaded runs by checking **local cache file** (`.pluto_upload_cache` in current directory or `NEPTUNE_EXPORTER_PLUTO_BASE_DIR`). Cache stores `project_id::run_name` keys. Delete this file or run from a different directory to re-upload the same runs. The loader does **not** check the Pluto backend for existing runs.
+  - Skips already-loaded runs by checking **local cache file** (`.pluto_upload_cache.txt` in current directory or `NEPTUNE_EXPORTER_PLUTO_BASE_DIR`). Cache stores `project_id::run_name` keys. Delete this file or run from a different directory to re-upload the same runs. The loader does **not** check the Pluto backend for existing runs.
 
 ## Experiment/run mapping to targets
 

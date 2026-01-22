@@ -5,6 +5,7 @@ import gc
 import logging
 import os
 import re
+import signal
 import sys
 import time
 from decimal import Decimal
@@ -73,44 +74,20 @@ class PlutoLoader(DataLoader):
         self._pluto_base_dir = Path(os.getenv("NEPTUNE_EXPORTER_PLUTO_BASE_DIR", ".")).resolve()
         self._pluto_base_dir.mkdir(parents=True, exist_ok=True)
 
-        # Duplicate cache
-        # Default cache location renamed for clarity
-        cache_default = self._pluto_base_dir / ".pluto_upload_cache"
-        self._loaded_cache_path = Path(
-            os.getenv("NEPTUNE_EXPORTER_PLUTO_LOADED_CACHE", str(cache_default))
-        ).resolve()
+        # Duplicate cache (no legacy fallback)
+        cache_default = self._pluto_base_dir / ".pluto_upload_cache.txt"
+        env_cache_path = os.getenv("NEPTUNE_EXPORTER_PLUTO_LOADED_CACHE")
+        self._loaded_cache_path = Path(env_cache_path or cache_default).resolve()
 
         self._loaded_run_keys: set[str] = set()
         try:
-            # Read current cache (new name)
+            # Read current cache (single supported name)
             if self._loaded_cache_path.exists():
                 self._loaded_run_keys = set(
                     line.strip()
                     for line in self._loaded_cache_path.read_text(encoding="utf-8").splitlines()
                     if line.strip()
                 )
-            else:
-                # Backward-compat: also read legacy cache filename if present
-                legacy_cache = self._pluto_base_dir / ".neptune_exporter_pluto_loaded_runs.txt"
-                if legacy_cache.exists():
-                    self._loaded_run_keys = set(
-                        line.strip()
-                        for line in legacy_cache.read_text(encoding="utf-8").splitlines()
-                        if line.strip()
-                    )
-                    try:
-                        # Touch the new cache file with migrated contents
-                        self._loaded_cache_path.parent.mkdir(parents=True, exist_ok=True)
-                        self._loaded_cache_path.write_text(
-                            "\n".join(sorted(self._loaded_run_keys)) + "\n", encoding="utf-8"
-                        )
-                        self._logger.info(
-                            "Migrated legacy cache %s to %s",
-                            str(legacy_cache),
-                            str(self._loaded_cache_path),
-                        )
-                    except Exception:
-                        self._logger.debug("Failed to migrate legacy cache file", exc_info=True)
         except Exception:
             self._logger.debug("Failed reading local Pluto loaded-run cache", exc_info=True)
 
@@ -185,14 +162,11 @@ class PlutoLoader(DataLoader):
     def _ensure_runtime_dirs(self, pluto_project: str, run_name: str) -> None:
         if not self._skip_runtime_attachments:
             return
-        for p in (
-            self._pluto_base_dir / ".pluto" / pluto_project / run_name / "files" / "runtime",
-            self._pluto_base_dir / ".pluto" / ".pluto" / pluto_project / run_name / "files" / "runtime",
-        ):
-            try:
-                p.mkdir(parents=True, exist_ok=True)
-            except Exception:
-                pass
+        p = self._pluto_base_dir / ".pluto" / pluto_project / run_name / "files" / "runtime"
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            self._logger.debug("Failed to create runtime dir (non-fatal): %s", p, exc_info=True)
 
     def _maybe_flush(self, op: object) -> None:
         try:
@@ -555,10 +529,8 @@ class PlutoLoader(DataLoader):
 
             # Log files in chunks (50-200 at a time) to avoid overload + 502s
             # Each chunk: log, flush, short sleep
-            file_chunk_size = int(os.getenv("NEPTUNE_EXPORTER_PLUTO_FILE_CHUNK_SIZE", "100"))
-            if file_chunk_size < 1:
-                file_chunk_size = 100
-            file_sleep_seconds = float(os.getenv("NEPTUNE_EXPORTER_PLUTO_FILE_CHUNK_SLEEP", "0.5"))
+            file_chunk_size = self._file_chunk_size
+            file_sleep_seconds = self._file_chunk_sleep
 
             self._logger.info("Starting file upload phase with %d total files, chunk_size=%d, sleep=%fs", 
                             len(all_files_list), file_chunk_size, file_sleep_seconds)
@@ -674,7 +646,6 @@ class PlutoLoader(DataLoader):
         try:
             if hasattr(op, "finish"):
                 # If interrupted (Ctrl+C), mark run as canceled (SIGINT=2)
-                import signal
                 op.finish(code=signal.SIGINT if interrupted else None)
             elif hasattr(op, "close"):
                 op.close()
