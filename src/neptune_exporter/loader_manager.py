@@ -307,7 +307,7 @@ class LoaderManager:
         # Check if run already exists (for resumable loading)
         target_run_id = self._data_loader.find_run(
             project_id=project_id,
-            run_name=custom_run_id,
+            run_name=experiment_name or custom_run_id,
             experiment_id=target_experiment_id,
         )
 
@@ -320,7 +320,7 @@ class LoaderManager:
 
             target_run_id = self._data_loader.create_run(
                 project_id=project_id,
-                run_name=custom_run_id,
+                run_name=experiment_name or custom_run_id,
                 experiment_id=target_experiment_id,
                 parent_run_id=parent_target_run_id,
                 fork_step=fork_step,
