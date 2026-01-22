@@ -185,6 +185,7 @@ uv run neptune-exporter export -p "workspace/proj" --exporter neptune2 --runs-qu
   # Pluto (Trainy.ai)
   uv run neptune-exporter load \
     --loader pluto \
+    --pluto-api-key "$PLUTO_API_KEY" \
     --data-path ./exports/data \
     --files-path ./exports/files
   ```
@@ -204,7 +205,9 @@ uv run neptune-exporter export -p "workspace/proj" --exporter neptune2 --runs-qu
   > For Minfx, the `--step-multiplier` option is not needed since Neptune v2 natively supports float steps. The loader recreates runs in a Neptune-compatible backend and stores the original run ID in `import/original_run_id` for tracking and duplicate prevention.
 
   > [!NOTE]
-  > For Pluto, the loader uses decimal steps natively (no `--step-multiplier` needed). Authentication is required via `pluto login <api-key>` or `PLUTO_API_KEY` environment variable. Optional environment knobs:
+  > For Pluto, the loader uses decimal steps natively (no `--step-multiplier` needed). Authentication is configured via `--pluto-api-key` option or `PLUTO_API_KEY` environment variable.
+  >
+  > Optional environment variables:
   > - `NEPTUNE_EXPORTER_PLUTO_PROJECT_NAME`: override destination project name.
   > - `NEPTUNE_EXPORTER_PLUTO_BASE_DIR`: base directory for local Pluto working files and cache (default: current dir).
   > - `NEPTUNE_EXPORTER_PLUTO_LOADED_CACHE`: explicit path to the cache file (default: `.pluto_upload_cache` under base dir).
@@ -291,7 +294,7 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
   - Recreates artifacts using Neptune's internal artifact registration API. Files are uploaded with auto-detected extensions for proper UI rendering.
   - Skips histogram series (not supported in Neptune v2 API) and auto-generated source code diffs.
 - **Pluto loader**:
-  - Requires `pluto-ml` SDK installed and authentication (uses stored credentials from environment).
+  - Requires `pluto-ml` SDK installed and authentication via `--pluto-api-key` option or `PLUTO_API_KEY` environment variable. Optionally use `--pluto-host` for self-hosted instances.
   - Handles large runs via streaming batches and chunked uploads; knobs are configurable via environment variables (see above).
   - Metrics are buffered and flushed in steps; optional downsampling via `NEPTUNE_EXPORTER_PLUTO_LOG_EVERY`.
   - Files are uploaded with type-aware previews (images via `Image`, text via `Text`, others via `Artifact`) in manageable chunks.

@@ -52,29 +52,6 @@ class WandBLoader(DataLoader):
         self._logger = logging.getLogger(__name__)
         self._active_run: Optional[wandb.Run] = None
 
-        # NOTE: Large runs can crash due to memory growth.
-        # We keep the changes minimal by:
-        #   1) Streaming Arrow tables in smaller batches (avoids huge to_pandas()).
-        #   2) Logging metrics without using W&B's `step=` (which must be monotonic).
-        #      Instead, we log a custom step key `neptune_step` and tell W&B to use it
-        #      as the x-axis via define_metric(), which allows out-of-order steps
-        #      without dropping points.
-        #   3) Optional downsampling via env var (set to 1 for lossless).
-        #
-        # Environment knobs:
-        #   - NEPTUNE_EXPORTER_WANDB_BATCH_ROWS (default: 50_000)
-        #   - NEPTUNE_EXPORTER_WANDB_LOG_EVERY (default: 1)
-        self._batch_rows: int = int(
-            os.getenv("NEPTUNE_EXPORTER_WANDB_BATCH_ROWS", "50000")
-        )
-        self._log_every: int = int(os.getenv("NEPTUNE_EXPORTER_WANDB_LOG_EVERY", "1"))
-        if self._log_every <= 0:
-            self._log_every = 1
-
-        # Cache for a stable set of metric keys across the whole run.
-        # This helps W&B avoid excessive memory usage when keys vary by step.
-        self._metric_keys_cache: Optional[list[str]] = None
-
         # Authenticate with W&B
         if api_key:
             wandb.login(key=api_key)
@@ -233,15 +210,6 @@ class WandBLoader(DataLoader):
 
             self._active_run = run
 
-            # Reset per-run caches
-            self._metric_keys_cache = None
-
-            # Define Neptune step as the custom x-axis so we can log out of order
-            # without dropping points (avoid using `step=` which must be monotonic).
-            # NOTE: This applies to all metrics logged after these calls.
-            wandb.define_metric("neptune_step")
-            wandb.define_metric("*", step_metric="neptune_step")
-
             self._logger.info(f"Created run '{run_name}' with W&B ID {wandb_run_id}")
             return TargetRunId(wandb_run_id)
 
@@ -274,19 +242,11 @@ class WandBLoader(DataLoader):
                 raise RuntimeError(f"Run {run_id} is not active")
 
             for run_data_part in run_data:
-                # IMPORTANT: Avoid materializing huge tables into pandas all at once.
-                # Stream Arrow in smaller record batches to prevent memory spikes/crashes.
-                for batch in run_data_part.to_batches(max_chunksize=self._batch_rows):
-                    batch_table = pa.Table.from_batches([batch])
+                run_df = run_data_part.to_pandas()
 
-                    # Use pandas conversion flags that reduce memory pressure.
-                    # - split_blocks=True can reduce peak memory
-                    # - self_destruct=True allows Arrow to release buffers sooner
-                    run_df = batch_table.to_pandas(split_blocks=True, self_destruct=True)
-
-                    self.upload_parameters(run_df, run_id)
-                    self.upload_metrics(run_df, run_id, step_multiplier)
-                    self.upload_artifacts(run_df, run_id, files_directory, step_multiplier)
+                self.upload_parameters(run_df, run_id)
+                self.upload_metrics(run_df, run_id, step_multiplier)
+                self.upload_artifacts(run_df, run_id, files_directory, step_multiplier)
 
             # Finish the run
             self._active_run.finish()
@@ -355,44 +315,20 @@ class WandBLoader(DataLoader):
         if metrics_data.empty:
             return
 
-        # Build a stable set of metric keys for the entire run (cached).
-        # This helps avoid W&B memory growth when the set of logged keys changes step-to-step.
-        if self._metric_keys_cache is None:
-            try:
-                unique_paths = metrics_data["attribute_path"].dropna().unique()
-                self._metric_keys_cache = sorted(
-                    self._sanitize_attribute_name(p) for p in unique_paths
-                )
-            except Exception:
-                # Fallback: if anything goes wrong, don't cache keys
-                self._metric_keys_cache = []
-
-        metric_keys = self._metric_keys_cache or []
-
         # Use global step multiplier (calculated from all series + fork_step)
         # Group by step to log all metrics at each step together
         for step_value, group in metrics_data.groupby("step"):
             if pd.notna(step_value):
                 step = self._convert_step_to_int(step_value, step_multiplier)
 
-                # Optional downsampling for huge runs (set NEPTUNE_EXPORTER_WANDB_LOG_EVERY)
-                # Set to 1 for lossless.
-                if self._log_every > 1 and (step % self._log_every) != 0:
-                    continue
-
-                # Use stable schema: initialize all known keys (missing values become None)
-                metrics = {k: None for k in metric_keys} if metric_keys else {}
-
+                metrics = {}
                 for _, row in group.iterrows():
                     if pd.notna(row["float_value"]):
                         attr_name = self._sanitize_attribute_name(row["attribute_path"])
                         metrics[attr_name] = row["float_value"]
 
                 if metrics:
-                    # IMPORTANT: Do NOT pass `step=` to W&B (it must be monotonic).
-                    # Instead, log our own custom step key and let W&B use it as the x-axis.
-                    metrics["neptune_step"] = step
-                    self._active_run.log(metrics)
+                    self._active_run.log(metrics, step=step)
 
         self._logger.info(f"Uploaded metrics for run {run_id}")
 
@@ -515,10 +451,7 @@ class WandBLoader(DataLoader):
                         wandb_hist = wandb.Histogram(
                             np_histogram=(hist.get("values", []), hist.get("edges", []))
                         )
-                        # IMPORTANT: Log with custom step key (avoid `step=` monotonic requirement)
-                        self._active_run.log(
-                            {"neptune_step": step, attr_name: wandb_hist}
-                        )
+                        self._active_run.log({attr_name: wandb_hist}, step=step)
                     except Exception:
                         self._logger.error(
                             f"Failed to log histogram for {attr_path} at step {step}",

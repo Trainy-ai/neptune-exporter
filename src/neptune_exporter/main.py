@@ -421,6 +421,10 @@ def export(
     help="Minfx API token. Only used with --loader minfx.",
 )
 @click.option(
+    "--pluto-api-key",
+    help="Pluto API key for authentication. Only used with --loader pluto.",
+)
+@click.option(
     "--name-prefix",
     help="Optional prefix for experiment/project and run names.",
 )
@@ -456,6 +460,7 @@ def load(
     litlogger_user_id: str | None,
     minfx_project: str | None,
     minfx_api_token: str | None,
+    pluto_api_key: str | None,
     name_prefix: str | None,
     verbose: bool,
     log_file: Path,
@@ -709,13 +714,13 @@ def load(
                 "Install with `pip install pluto-ml` or `pluto-ml-nightly` and try again."
             )
 
-        # Read credentials from env if not provided via options
-        pluto_api_key = os.getenv("PLUTO_API_KEY")
-        pluto_host = os.getenv("PLUTO_URL_API") or os.getenv("PLUTO_URL_PY") or os.getenv("PLUTO_URL_APP")
+        # Resolve Pluto API key: CLI option -> environment variable
+        if not pluto_api_key:
+            pluto_api_key = os.getenv("PLUTO_API_KEY")
 
         data_loader = PlutoLoader(
             api_key=pluto_api_key,
-            host=pluto_host,
+            host=None,
             name_prefix=name_prefix,
             show_client_logs=verbose,
         )
