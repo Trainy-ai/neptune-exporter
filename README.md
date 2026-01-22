@@ -330,8 +330,8 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
   - Fork relationships are stored in `import/forking/parent` and `import/forking/step` as metadata (Neptune v2 doesn't support native forking via the API).
 - **Pluto:**
   - Target project is specified via `NEPTUNE_EXPORTER_PLUTO_PROJECT_NAME` env var (e.g., `"workspace/project"`), otherwise uses Neptune `project_id` directly.
-  - Neptune runs become Pluto Ops with their original `run_id` (or `custom_run_id`) as the Op name.
-  - Neptune's `sys/name` (experiment name) is stored as tags (`import:neptune`, `import_project:<project_id>`) for traceability. Fork relationships are not natively supported
+  - Neptune runs become Pluto Ops with `sys/name` (experiment name) as the Op name; if missing, falls back to `custom_run_id`/`run_id`.
+  - Tags include `import:neptune` and `import_project:<project_id>` and Neptune tags are preserved. Fork relationships are not natively supported.
 
 ## Attribute/type mapping (detailed)
 
