@@ -16,4 +16,5 @@ wheels/
 .env
 .neptune/
 wandb/
-exports/.DS_Store
+exports/
+.DS_Store
