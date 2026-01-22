@@ -585,8 +585,6 @@ def load(
                 raise click.BadParameter(
                     "MLflow tracking URI is required when using --loader mlflow. You can set it as an environment variable MLFLOW_TRACKING_URI or provide it with --mlflow-tracking-uri."
                 )
-        from neptune_exporter.loaders.mlflow_loader import MLflowLoader
-
         data_loader = MLflowLoader(
             tracking_uri=mlflow_tracking_uri,
             name_prefix=name_prefix,
@@ -615,8 +613,6 @@ def load(
                 raise click.BadParameter(
                     "W&B API key is required when using --loader wandb. You can set it as an environment variable WANDB_API_KEY or provide it with --wandb-api-key."
                 )
-        from neptune_exporter.loaders.wandb_loader import WandBLoader
-
         data_loader = WandBLoader(
             entity=wandb_entity,
             api_key=wandb_api_key,
@@ -667,8 +663,6 @@ def load(
                     "Comet API key is required when using --loader comet. You can set it as an environment variable COMET_API_KEY, provide it with --comet-api-key, or in a ~/.comet.config file"
                 )
 
-        from neptune_exporter.loaders.comet_loader import CometLoader
-
         data_loader = CometLoader(
             workspace=comet_workspace,
             api_key=comet_api_key,
@@ -695,8 +689,6 @@ def load(
         # User ID is optional
         if not litlogger_user_id:
             litlogger_user_id = os.getenv("LITLOGGER_USER_ID")
-        from neptune_exporter.loaders.litlogger_loader import LitLoggerLoader
-
         data_loader = LitLoggerLoader(
             owner=litlogger_owner,
             api_key=litlogger_api_key,
