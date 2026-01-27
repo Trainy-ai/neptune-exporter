@@ -293,7 +293,6 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
   - If the source data contains fork relationships, they are stored as metadata in `import/forking/parent` and `import/forking/step`.
   - Recreates artifacts using Neptune's internal artifact registration API. Files are uploaded with auto-detected extensions for proper UI rendering.
   - Skips histogram series (not supported in Neptune v2 API) and auto-generated source code diffs.
-  - If a target run with the same name already exists in the experiment or project, the loader skips uploading that run to avoid duplicates.
 - **Pluto loader**:
   - Requires `pluto-ml` SDK installed and authentication via `--pluto-api-key` option or `PLUTO_API_KEY` environment variable. Optionally use `--pluto-host` for self-hosted instances.
   - Handles large runs via streaming batches and chunked uploads; knobs are configurable via environment variables (see above).
@@ -302,6 +301,7 @@ All records use `src/neptune_exporter/model.py::SCHEMA`:
   - String series (logs) are uploaded as two Text artifacts: `logs/stdout` and `logs/stderr` (and also printed to the console during load).
   - Supports decimal steps natively (no `--step-multiplier` needed). Histograms are logged by step.
   - Skips already-loaded runs by checking **local cache file** (`.pluto_upload_cache.txt` in current directory or `NEPTUNE_EXPORTER_PLUTO_BASE_DIR`). Cache stores `project_id::run_name` keys. Delete this file or run from a different directory to re-upload the same runs. The loader does **not** check the Pluto backend for existing runs.
+- If a target run with the same name already exists in the experiment or project, the loader skips uploading that run to avoid duplicates.
 
 ## Experiment/run mapping to targets
 
