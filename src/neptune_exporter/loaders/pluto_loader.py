@@ -119,6 +119,7 @@ class PlutoLoader(DataLoader):
 
         self._ops: dict[str, object] = {}
         self._run_id_to_key: dict[str, str] = {}
+        self._last_experiment_name: Optional[str] = None
 
     def _ensure_pluto(self):
         if self._pluto is None:
@@ -127,6 +128,16 @@ class PlutoLoader(DataLoader):
 
     def _run_key(self, project_id: ProjectId, run_name: str) -> str:
         return f"{project_id}::{run_name}"
+    
+    def _as_list(self, x):
+        """Convert numpy/arrow-ish containers to plain Python lists."""
+        try:
+            if hasattr(x, "tolist"):
+                return x.tolist()
+        except Exception:
+            pass
+        return list(x)
+
 
     def _mark_run_loaded(self, key: str) -> None:
         self._loaded_run_keys.add(key)
@@ -185,6 +196,7 @@ class PlutoLoader(DataLoader):
             if self.name_prefix:
                 target_name = f"{self.name_prefix}/{target_name}"
 
+        self._last_experiment_name = experiment_name
         self._logger.info("Pluto client not required; using project name as id")
         self._logger.info("Using Pluto project/experiment %s", target_name)
         return TargetExperimentId(target_name)
@@ -201,7 +213,9 @@ class PlutoLoader(DataLoader):
         the local cache file. To enable true deduplication, use run_id parameter
         in pluto.init() so Pluto resumes existing runs by external ID.
         """
-        key = self._run_key(project_id, run_name)
+        # Use the actual Pluto project/experiment name (experiment_id if provided)
+        pluto_project = str(experiment_id) if experiment_id else str(project_id)
+        key = f"{pluto_project}::{run_name}"
         if key in self._loaded_run_keys:
             return TargetRunId(run_name)
         return None
@@ -217,7 +231,9 @@ class PlutoLoader(DataLoader):
     ) -> TargetRunId:
         pluto = self._ensure_pluto()
 
-        key = self._run_key(project_id, run_name)
+        # Use the actual Pluto project name (experiment_id if provided) to build a stable key
+        pluto_project = str(experiment_id) if experiment_id else str(project_id)
+        key = f"{pluto_project}::{run_name}"
         if key in self._loaded_run_keys:
             self._logger.info("Run '%s' already loaded (cache hit); skipping", run_name)
             return TargetRunId(run_name)
@@ -225,20 +241,32 @@ class PlutoLoader(DataLoader):
         tags = ["import:neptune", f"import_project:{project_id}"]
         pluto_project = str(experiment_id) if experiment_id else str(project_id)
 
+        # Use Neptune's experiment name (sys/name) as the Pluto display name if available,
+        # falling back to the custom_run_id passed as run_name
+        display_name = self._last_experiment_name or run_name
+        self._last_experiment_name = None
+
         self._ensure_runtime_dirs(pluto_project, run_name)
 
         # Generate stable external_id from project_id + run_name
         # This allows Pluto to detect and resume existing runs instead of creating duplicates
         external_id = f"{project_id}::{run_name}"
 
-        op = pluto.init(
+        init_kwargs = dict(
             dir=str(self._pluto_base_dir),
             project=pluto_project,
-            name=run_name,
+            name=display_name,
             config=None,
             tags=tags,
             run_id=external_id,  # Enable Pluto-side deduplication
         )
+        # Pass api_key/host to pluto.init when available to avoid interactive auth prompts
+        if self.api_key:
+            init_kwargs["api_key"] = self.api_key
+        if self.host:
+            init_kwargs["host"] = self.host
+
+        op = pluto.init(**init_kwargs)
 
         run_id = getattr(getattr(op, "settings", None), "_op_id", None) or run_name
         run_id_str = str(run_id)
@@ -492,17 +520,56 @@ class PlutoLoader(DataLoader):
                                     stdout_lines.append(text_value)
                                     print(text_value, file=sys.stdout, flush=True)
 
-                        # --- Hist (collect only) ---
                         elif atype == "histogram_series":
                             histogram_series_count += 1
-                            if isinstance(row.get("histogram_value"), dict) and hasattr(pluto, "Histogram"):
+                            hv = row.get("histogram_value")
+                            if hv is None:
+                                continue
+
+                            try:
+                                # Arrow scalar -> python
+                                if hasattr(hv, "as_py"):
+                                    hv = hv.as_py()
+
+                                # Expect pre-binned: [freq, bin_edges]
+                                if not (hasattr(hv, "__len__") and len(hv) == 2):
+                                    self._logger.warning("Skipping histogram %s at step=%s: not a [freq, bin_edges] pair", apath, step)
+                                    continue
+
+                                freq, bin_edges = hv
+
+                                # Normalize inner containers
+                                if hasattr(freq, "as_py"):
+                                    freq = freq.as_py()
+                                if hasattr(bin_edges, "as_py"):
+                                    bin_edges = bin_edges.as_py()
+
                                 try:
-                                    hist = pluto.Histogram(row.get("histogram_value"))
-                                    if step not in all_hists:
-                                        all_hists[step] = {}
-                                    all_hists[step][apath] = hist
+                                    import numpy as np
+                                    if isinstance(freq, np.ndarray):
+                                        freq = freq.tolist()
+                                    if isinstance(bin_edges, np.ndarray):
+                                        bin_edges = bin_edges.tolist()
                                 except Exception:
-                                    self._logger.debug("Failed to create Histogram object", exc_info=True)
+                                    pass
+
+                                freq = [float(x) for x in list(freq)]
+                                bin_edges = [float(x) for x in list(bin_edges)]
+
+                                if len(bin_edges) != len(freq) + 1:
+                                    self._logger.warning(
+                                        "Skipping histogram %s at step=%s: edges(%d) != freq(%d)+1",
+                                        apath, step, len(bin_edges), len(freq)
+                                    )
+                                    continue
+
+                                hist = pluto.Histogram([freq, bin_edges], bins=None)
+                                if step not in all_hists:
+                                    all_hists[step] = {}
+                                all_hists[step][apath] = hist
+
+                            except Exception as e:
+                                self._logger.error("Failed to log histogram %s at step=%s: %s", apath, step, e, exc_info=True)
 
                     del df
                     del batch_table
@@ -585,14 +652,21 @@ class PlutoLoader(DataLoader):
             # Log hists by step
             if all_hists:
                 self._logger.info("Pluto: logging %d histogram steps", len(all_hists))
-            for step, hist_dict in sorted(all_hists.items()):
-                if hist_dict:
-                    try:
-                        op.log(hist_dict, step=step)
-                        op_log_call_count += 1
-                        any_logged = True
-                    except Exception:
-                        self._logger.debug("Failed to log histogram batch for step %s", step, exc_info=True)
+
+            for step, hist_dict in sorted(all_hists.items(), key=lambda x: (x[0] is None, x[0])):
+                if not hist_dict:
+                    continue
+                try:
+                    self._logger.info("Pluto: uploading %d histograms at step=%s", len(hist_dict), step)
+                    op.log(hist_dict, step=step)
+                    op_log_call_count += 1
+                    any_logged = True
+                    self._maybe_flush(op)
+                except Exception as e:
+                    self._logger.error(
+                        "Histogram log failed at step=%s keys=%s: %s",
+                        step, list(hist_dict.keys()), e, exc_info=True
+                    )
 
             self._maybe_flush(op)
 
