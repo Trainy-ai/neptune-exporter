@@ -13,7 +13,6 @@ This test supports two modes:
 Example (real upload):
 
         PLUTO_DO_UPLOAD=1 PLUTO_PROJECT=simple_test PLUTO_API_KEY=<key> \
-        PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring \
         uv run pytest tests/unit/test_pluto_loader.py::test_pluto_loader_combined -q
 
 Use the offline mode for fast local testing; enable real-upload only when
