@@ -1,8 +1,23 @@
 """Unit test: combined Pluto loader behavior.
 
-Creates a single run with params, metrics, histograms, files, and string_series
-and performs a dry-run by default. Set `PLUTO_DO_UPLOAD=1` and provide
-`PLUTO_PROJECT`/`PLUTO_API_KEY` to perform a real upload.
+This test supports two modes:
+
+- Offline / dry-run (default): the test will simulate creating a run and
+    exercising the loader logic without performing any network uploads.
+
+- Real-upload mode: set the environment variable `PLUTO_DO_UPLOAD=1` to
+    enable actual uploads to a Pluto server. When running in this mode you
+    must also provide the destination project name and credentials via
+    `PLUTO_PROJECT` (e.g. "owner/project_name") and `PLUTO_API_KEY`.
+
+Example (real upload):
+
+        PLUTO_DO_UPLOAD=1 PLUTO_PROJECT=simple_test PLUTO_API_KEY=<key> \
+        PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring \
+        uv run pytest tests/unit/test_pluto_loader.py::test_pluto_loader_combined -q
+
+Use the offline mode for fast local testing; enable real-upload only when
+you want the test to actually push data to a Pluto instance.
 """
 
 import os
