@@ -30,7 +30,7 @@ Neptune Exporter is a CLI tool to move Neptune experiments (version `2.x` or `3.
   - Comet workspace and API key, set with `COMET_WORKSPACE`/`--comet-workspace` and `COMET_API_KEY`/`--comet-api-key`.
   - Lightning AI LitLogger requires auth credentials (set via `lightning login` or `--litlogger-user-id` and `--litlogger-api-key`). Optionally specify `--litlogger-owner` for the user or organization name where teamspaces will be created (defaults to the authenticated user).
   - Minfx project and API token, set with `MINFX_PROJECT`/`--minfx-project` and `MINFX_API_TOKEN`/`--minfx-api-token`.
-  - Pluto SDK: install [`pluto-ml`](https://github.com/Trainy-ai/pluto) (or use `--extra pluto` during `uv sync`). Authenticate via `pluto login <api-key>` or set `PLUTO_API_KEY` environment variable. Optionally set `NEPTUNE_EXPORTER_PLUTO_PROJECT_NAME` to override the target project name. See the [Pluto repo](https://github.com/Trainy-ai/pluto) and the [Pluto project page](https://pluto.trainy.ai).
+  - Pluto SDK: install [`pluto-ml`](https://github.com/Trainy-ai/pluto) (or use `--extra pluto` during `uv sync`). Authenticate via `pluto login <api-key>` or set `PLUTO_API_KEY` environment variable. See the [Pluto repo](https://github.com/Trainy-ai/pluto) and the [Pluto project page](https://pluto.trainy.ai).
 
 ## Installation
 
